@@ -37,6 +37,21 @@ export function startBot(): Client {
     await registerCommands(ALL_COMMANDS);
   });
 
+  client.on(Events.GuildCreate, async (guild) => {
+    logger.info({ guild: guild.name, id: guild.id }, "Bot added to new server");
+    const ownerId = process.env["OWNER_ID"];
+    if (ownerId) {
+      try {
+        const owner = await client.users.fetch(ownerId);
+        await owner.send(`🆕 **Bot added to a new server!**\n**Server:** ${guild.name}\n**Members:** ${guild.memberCount}\n**Server ID:** \`${guild.id}\`\n\nManage it from the dashboard. Use \`/setup\` in the server to configure it. If you didn't authorize this, you can remove the bot from the Owner Panel.`);
+      } catch { }
+    }
+  });
+
+  client.on(Events.GuildDelete, (guild) => {
+    logger.info({ guild: guild.name, id: guild.id }, "Bot removed from server");
+  });
+
   // Track messages
   client.on(Events.MessageCreate, (message) => {
     if (message.author.bot || !message.guild) return;

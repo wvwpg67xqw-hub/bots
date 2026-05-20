@@ -543,4 +543,18 @@ export function getAllApplications(guildId: string) {
   return rows.map(r => ({ ...r, answers: JSON.parse(r.answers) }));
 }
 
+export function getUserApplications(userId: string) {
+  const rows = db.prepare(
+    "SELECT a.*, f.name as form_name FROM applications a JOIN application_forms f ON a.form_id = f.id WHERE a.user_id = ? ORDER BY a.submitted_at DESC"
+  ).all(userId) as any[];
+  return rows.map(r => ({ ...r, answers: JSON.parse(r.answers) }));
+}
+
+export function getAllActiveForms() {
+  const rows = db.prepare(
+    "SELECT * FROM application_forms WHERE active = 1 ORDER BY created_at DESC"
+  ).all() as any[];
+  return rows.map(r => ({ ...r, questions: JSON.parse(r.questions) }));
+}
+
 export default db;

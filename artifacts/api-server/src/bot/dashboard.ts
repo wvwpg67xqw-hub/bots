@@ -3,7 +3,7 @@ import type { Client } from "discord.js";
 import {
   getGuildForms, getForm, createForm, updateForm, deleteForm,
   getFormApplications, getApplication, updateApplicationStatus,
-  submitApplication,
+  submitApplication, getUserApplications, getAllActiveForms,
   addDashboardAdmin, removeDashboardAdmin, isDashboardAdmin, getDashboardAdmins,
   getReferralCode, recordReferral, getReferralLeaderboard, getUserReferralCode,
   getOrCreateReferralCode,
@@ -122,7 +122,7 @@ export function createDashboardRouter(client: Client): Router {
   router.get("/", requireLogin, (req: any, res) => {
     if (isOwner(req.session.userId)) return res.redirect("/dashboard/owner");
     if (isDashboardAdmin(req.session.userId)) return res.redirect("/dashboard/admin");
-    res.status(403).send(renderPage("Access Denied", accessDeniedPage(req.session.username)));
+    res.redirect("/dashboard/portal");
   });
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -133,12 +133,18 @@ export function createDashboardRouter(client: Client): Router {
     const guilds = client.guilds.cache;
     const admins = getDashboardAdmins();
     const guildCards = [...guilds.values()].map(g => `
-      <a href="/dashboard/owner/guild/${g.id}" class="block bg-gray-800 rounded-xl p-5 hover:bg-gray-700 transition border border-gray-700 hover:border-indigo-500">
-        <div class="flex items-center gap-4">
+      <div class="bg-gray-800 rounded-xl p-5 border border-gray-700">
+        <div class="flex items-center gap-4 mb-3">
           ${g.iconURL() ? `<img src="${g.iconURL()}" class="w-12 h-12 rounded-full">` : `<div class="w-12 h-12 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold text-xl">${g.name[0]}</div>`}
           <div><div class="font-semibold text-white">${escapeHtml(g.name)}</div><div class="text-sm text-gray-400">${g.memberCount.toLocaleString()} members</div></div>
         </div>
-      </a>`).join("");
+        <div class="flex gap-2">
+          <a href="/dashboard/owner/guild/${g.id}" class="flex-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded text-xs text-white text-center transition">Manage</a>
+          <form method="POST" action="/dashboard/owner/guild/${g.id}/leave" onsubmit="return confirm('Remove the bot from ${escapeHtml(g.name)}?')">
+            <button class="px-3 py-1.5 bg-gray-700 hover:bg-red-700 rounded text-xs text-gray-300 hover:text-white transition">Leave</button>
+          </form>
+        </div>
+      </div>`).join("");
 
     res.send(renderPage("Owner Panel", navBar(req.session.username, req.session.avatar, "owner") + `
       <div class="max-w-5xl mx-auto px-4 py-8">
@@ -323,6 +329,12 @@ export function createDashboardRouter(client: Client): Router {
     res.redirect(`/dashboard/owner/guild/${req.params.guildId}`);
   });
 
+  router.post("/owner/guild/:guildId/leave", requireOwner, async (req: any, res) => {
+    const guild = client.guilds.cache.get(req.params.guildId);
+    if (guild) { try { await guild.leave(); } catch { } }
+    res.redirect("/dashboard/owner");
+  });
+
   router.get("/owner/guild/:guildId/form/:formId/submissions", requireOwner, (req: any, res) => {
     renderSubmissions(req, res, req.params.guildId, req.params.formId, "owner");
   });
@@ -408,6 +420,165 @@ export function createDashboardRouter(client: Client): Router {
 
   router.post("/admin/guild/:guildId/application/:appId/deny", requireAdmin, async (req: any, res) => {
     await handleAppDecision(req, res, "denied", client);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // APPLICANT PORTAL — for regular logged-in users
+  // ═══════════════════════════════════════════════════════════════════════
+
+  router.get("/portal", requireLogin, (req: any, res) => {
+    if (isOwner(req.session.userId)) return res.redirect("/dashboard/owner");
+    if (isDashboardAdmin(req.session.userId)) return res.redirect("/dashboard/admin");
+    const forms = getAllActiveForms();
+    const userApps = getUserApplications(req.session.userId);
+    const formCards = forms.map((f: any) => {
+      const guild = client.guilds.cache.get(f.guild_id);
+      const userApp = userApps.find((a: any) => a.form_id === f.id);
+      const statusBadge = userApp
+        ? `<span class="px-2 py-1 rounded text-xs ${userApp.status === "accepted" ? "bg-green-900 text-green-300" : userApp.status === "denied" ? "bg-red-900 text-red-300" : "bg-yellow-900 text-yellow-300"}">${userApp.status === "pending" ? "⏳ Pending" : userApp.status === "accepted" ? "✅ Accepted" : "❌ Denied"}</span>`
+        : "";
+      return `
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700 flex flex-col gap-3">
+          <div class="flex items-start justify-between">
+            <div>
+              <h3 class="font-semibold text-white text-base">${escapeHtml(f.name)}</h3>
+              ${f.description ? `<p class="text-sm text-gray-400 mt-0.5">${escapeHtml(f.description)}</p>` : ""}
+              ${guild ? `<p class="text-xs text-gray-500 mt-1">📍 ${escapeHtml(guild.name)}</p>` : ""}
+            </div>
+            ${statusBadge}
+          </div>
+          <div class="text-xs text-gray-500">${f.questions.length} question${f.questions.length !== 1 ? "s" : ""}</div>
+          ${userApp
+            ? `<div class="text-xs text-gray-400 italic">You already applied to this position.</div>`
+            : `<a href="/dashboard/portal/apply/${f.id}" class="inline-block px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white text-sm font-medium text-center transition">Apply Now →</a>`
+          }
+        </div>`;
+    }).join("");
+    res.send(renderPage("Staff Portal", portalNavBar(req.session.username, req.session.avatar) + `
+      <div class="max-w-5xl mx-auto px-4 py-8">
+        <div class="mb-8">
+          <h1 class="text-3xl font-bold text-white">👋 Welcome, ${escapeHtml(req.session.username)}</h1>
+          <p class="text-gray-400 mt-1">Browse open positions and submit your application below.</p>
+        </div>
+        ${forms.length === 0
+          ? `<div class="bg-gray-800 rounded-xl p-16 text-center border border-gray-700 border-dashed">
+              <div class="text-4xl mb-3">📋</div>
+              <p class="text-gray-400">No open positions right now. Check back later!</p>
+            </div>`
+          : `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">${formCards}</div>`}
+      </div>`));
+  });
+
+  router.get("/portal/apply/:formId", requireLogin, (req: any, res) => {
+    if (isOwner(req.session.userId)) return res.redirect("/dashboard/owner");
+    if (isDashboardAdmin(req.session.userId)) return res.redirect("/dashboard/admin");
+    const form = getForm(req.params.formId);
+    if (!form || !form.active) {
+      return void res.status(404).send(renderPage("Not Found", portalNavBar(req.session.username, req.session.avatar) + `
+        <div class="min-h-screen flex items-center justify-center">
+          <div class="text-center"><div class="text-5xl mb-4">📋</div>
+          <h1 class="text-2xl font-bold text-white mb-2">Form Not Found</h1>
+          <p class="text-gray-400 mb-4">This form doesn't exist or is no longer accepting applications.</p>
+          <a href="/dashboard/portal" class="text-indigo-400 hover:text-indigo-300 text-sm">← Back to Portal</a></div>
+        </div>`));
+    }
+    const guild = client.guilds.cache.get(form.guild_id);
+    const questions = form.questions.map((q: string, i: number) => `
+      <div class="mb-5">
+        <label class="block text-sm font-medium text-gray-300 mb-2">${escapeHtml(q)} <span class="text-red-400">*</span></label>
+        <textarea name="q_${i}" rows="3" required class="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-3 text-gray-200 placeholder-gray-500 focus:outline-none focus:border-indigo-500 resize-none text-sm" placeholder="Your answer..."></textarea>
+      </div>`).join("");
+    const avatarUrl = req.session.avatar ? `https://cdn.discordapp.com/avatars/${req.session.userId}/${req.session.avatar}.png` : null;
+    res.send(renderPage(`Apply — ${form.name}`, portalNavBar(req.session.username, req.session.avatar) + `
+      <div class="max-w-2xl mx-auto px-4 py-8">
+        <a href="/dashboard/portal" class="text-gray-400 hover:text-white text-sm mb-6 block">← Back to Portal</a>
+        <div class="bg-gray-800 rounded-2xl p-8 border border-gray-700">
+          <div class="mb-4">
+            <h1 class="text-2xl font-bold text-white">${escapeHtml(form.name)}</h1>
+            ${form.description ? `<p class="text-gray-400 mt-1 text-sm">${escapeHtml(form.description)}</p>` : ""}
+            ${guild ? `<p class="text-xs text-gray-500 mt-1">📍 ${escapeHtml(guild.name)}</p>` : ""}
+          </div>
+          <div class="flex items-center gap-3 bg-gray-700/50 rounded-lg px-4 py-3 mb-6">
+            ${avatarUrl ? `<img src="${avatarUrl}" class="w-8 h-8 rounded-full" onerror="this.style.display='none'">` : `<div class="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white text-xs font-bold">${escapeHtml((req.session.username || "?")[0])}</div>`}
+            <div>
+              <div class="text-white text-sm font-medium">${escapeHtml(req.session.username)}</div>
+              <div class="text-gray-400 text-xs">Submitting as this Discord account</div>
+            </div>
+          </div>
+          <form method="POST" action="/dashboard/portal/apply/${form.id}">
+            ${questions}
+            <button type="submit" class="w-full py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-white font-semibold transition text-sm">Submit Application</button>
+          </form>
+        </div>
+      </div>`));
+  });
+
+  router.post("/portal/apply/:formId", requireLogin, async (req: any, res): Promise<void> => {
+    if (isOwner(req.session.userId)) { res.redirect("/dashboard/owner"); return; }
+    if (isDashboardAdmin(req.session.userId)) { res.redirect("/dashboard/admin"); return; }
+    const form = getForm(req.params.formId);
+    if (!form || !form.active) { res.status(404).send("Form not found"); return; }
+    const answers: Record<string, string> = {};
+    form.questions.forEach((q: string, i: number) => { answers[q] = req.body[`q_${i}`] || ""; });
+    const appId = submitApplication(form.id, form.guild_id, req.session.userId, req.session.username, answers);
+    if (form.channel_id) {
+      try {
+        const guild = client.guilds.cache.get(form.guild_id);
+        const channel = guild?.channels.cache.get(form.channel_id);
+        if (channel?.isTextBased()) {
+          const embed = new EmbedBuilder().setColor(Colors.Blurple)
+            .setTitle(`📋 New Application — ${form.name}`)
+            .setDescription(`**Applicant:** ${req.session.username}\n**User ID:** \`${req.session.userId}\``)
+            .addFields(Object.entries(answers).map(([q, a]) => ({ name: q, value: (a || "No answer").slice(0, 1024) })))
+            .setTimestamp().setFooter({ text: `Application ID: ${appId}` });
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`app_accept_${appId}`).setLabel("Accept").setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`app_deny_${appId}`).setLabel("Deny").setStyle(ButtonStyle.Danger),
+          );
+          await channel.send({ embeds: [embed], components: [row] });
+        }
+      } catch { }
+    }
+    res.send(renderPage("Submitted!", portalNavBar(req.session.username, req.session.avatar) + `
+      <div class="max-w-lg mx-auto px-4 py-16 text-center">
+        <div class="text-5xl mb-4">✅</div>
+        <h1 class="text-2xl font-bold text-white mb-2">Application Submitted!</h1>
+        <p class="text-gray-400 text-sm mb-6">Your application for <strong class="text-white">${escapeHtml(form.name)}</strong> has been received. You'll be notified of the outcome.</p>
+        <a href="/dashboard/portal/my-apps" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white text-sm font-medium">View My Applications →</a>
+      </div>`));
+  });
+
+  router.get("/portal/my-apps", requireLogin, (req: any, res) => {
+    if (isOwner(req.session.userId)) return res.redirect("/dashboard/owner");
+    if (isDashboardAdmin(req.session.userId)) return res.redirect("/dashboard/admin");
+    const apps = getUserApplications(req.session.userId);
+    const cards = apps.map((a: any) => `
+      <div class="bg-gray-800 rounded-xl p-5 border border-gray-700">
+        <div class="flex items-start justify-between mb-2">
+          <div>
+            <div class="font-semibold text-white">${escapeHtml(a.form_name)}</div>
+            <div class="text-xs text-gray-400 mt-0.5">${new Date(a.submitted_at).toLocaleDateString()}</div>
+          </div>
+          <span class="px-2 py-1 rounded text-xs ${a.status === "accepted" ? "bg-green-900 text-green-300" : a.status === "denied" ? "bg-red-900 text-red-300" : "bg-yellow-900 text-yellow-300"}">
+            ${a.status === "pending" ? "⏳ Pending" : a.status === "accepted" ? "✅ Accepted" : "❌ Denied"}
+          </span>
+        </div>
+        ${a.status !== "pending" ? `<div class="text-xs text-gray-500">Reviewed ${a.reviewed_at ? new Date(a.reviewed_at).toLocaleDateString() : ""}</div>` : ""}
+      </div>`).join("");
+    res.send(renderPage("My Applications", portalNavBar(req.session.username, req.session.avatar) + `
+      <div class="max-w-3xl mx-auto px-4 py-8">
+        <div class="mb-8">
+          <h1 class="text-2xl font-bold text-white">My Applications</h1>
+          <p class="text-gray-400 mt-1">Track the status of your submitted applications.</p>
+        </div>
+        ${apps.length === 0
+          ? `<div class="bg-gray-800 rounded-xl p-16 text-center border border-gray-700 border-dashed">
+              <div class="text-4xl mb-3">📭</div>
+              <p class="text-gray-400 mb-4">You haven't applied to anything yet.</p>
+              <a href="/dashboard/portal" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white text-sm font-medium">Browse Open Positions</a>
+            </div>`
+          : `<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">${cards}</div>`}
+      </div>`));
   });
 
   // ── Shared helpers ─────────────────────────────────────────────────────
@@ -616,6 +787,27 @@ export function createReferRouter(): Router {
 
 function escapeHtml(str: string): string {
   return String(str ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function portalNavBar(username: string, avatar: string | null): string {
+  const avatarUrl = avatar ? `https://cdn.discordapp.com/avatars/0/${avatar}.png` : null;
+  return `<nav class="bg-gray-900 border-b border-gray-800 sticky top-0 z-10">
+    <div class="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
+      <div class="flex items-center gap-4">
+        <span class="text-white font-bold text-base">🤖 Staff Portal</span>
+        <span class="text-gray-600">|</span>
+        <a href="/dashboard/portal" class="text-gray-400 hover:text-white text-sm">Open Positions</a>
+        <a href="/dashboard/portal/my-apps" class="text-gray-400 hover:text-white text-sm">My Applications</a>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2">
+          ${avatarUrl ? `<img src="${avatarUrl}" class="w-7 h-7 rounded-full" onerror="this.style.display='none'">` : ""}
+          <span class="text-gray-300 text-sm">${escapeHtml(username)}</span>
+        </div>
+        <a href="/dashboard/auth/logout" class="text-gray-500 hover:text-gray-300 text-xs">Logout</a>
+      </div>
+    </div>
+  </nav>`;
 }
 
 function navBar(username: string, avatar: string | null, role: "owner" | "admin"): string {
