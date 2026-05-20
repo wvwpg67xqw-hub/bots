@@ -1,0 +1,102 @@
+# Discord Moderation Bot
+
+A full-featured Discord moderation and staff-network bot built with Discord.js v14. Includes 35 slash commands, SQLite persistence, role-based permissions, a web dashboard with Discord OAuth2 login, and an application system for server staff recruitment.
+
+## Features
+
+- **35 slash commands** covering warnings, bans, mutes, strikes, jail, promotions, and more
+- **Application system** — create custom forms, collect submissions, accept/deny applicants with automatic role assignment
+- **Web dashboard** — owner-only admin panel secured by Discord OAuth2
+- **Role-based permissions** — configure which roles can use each command, per server
+- **SQLite database** — zero-dependency persistent storage via Node's built-in `node:sqlite`
+- **Health endpoint** — Express server at `/health` for uptime monitoring (UptimeRobot etc.)
+
+## Setup
+
+### 1. Environment Variables
+
+Set the following secrets in your environment:
+
+| Variable | Required | Description |
+|---|---|---|
+| `TOKEN` | Yes | Discord bot token |
+| `CLIENT_ID` | Yes | Discord application/client ID |
+| `OWNER_ID` | Yes | Your Discord user ID (dashboard access) |
+| `DISCORD_CLIENT_SECRET` | Yes | OAuth2 client secret (for dashboard login) |
+
+### 2. Discord Developer Portal
+
+1. Go to [discord.com/developers/applications](https://discord.com/developers/applications)
+2. Select your application → **OAuth2**
+3. Under **Redirects**, add:
+   ```
+   https://<your-domain>/dashboard/auth/callback
+   ```
+4. Save changes
+
+### 3. First-time Server Setup
+
+Run `/setup` in your Discord server to configure log channels and roles before using any moderation commands.
+
+## Commands
+
+| Category | Commands |
+|---|---|
+| Setup | `/setup` `/setup-roles` `/setup-roles-extra` `/setup-roles-wizard` `/setup-status` `/setup-edit` |
+| Warnings | `/warn` `/warns` `/warn-leaderboard` |
+| Ad Warnings | `/ad-warn` `/remove-ad-warn` |
+| Moderation | `/mute` `/unmute` `/ban` `/fire` `/promote` `/demote-user` |
+| Strikes | `/strike` `/strike-remove` |
+| Jail | `/jail` `/unjail` |
+| Requests | `/ban-request` `/blacklist-request` `/network-ban-request` `/partnership-request` |
+| Utility | `/messages` `/message-leaderboard` `/case-info` `/balance` `/snipe` `/current-breaks` `/break` `/break-end` `/reset-messages` `/reset-messages-all` |
+
+## Dashboard
+
+Visit `/dashboard` in a browser to access the admin panel. You'll be redirected to Discord login — only the account matching `OWNER_ID` is granted access.
+
+From the dashboard you can:
+- Create and manage application forms
+- Configure which Discord channel submissions are posted to
+- Set accept/deny roles per server
+- View and manage all submissions
+
+### Application Flow
+
+1. Create a form in the dashboard and set a target channel + accept/deny roles
+2. Share the public apply link: `/apply/<formId>`
+3. Applicants fill out the form — a card with their answers is posted in your chosen channel
+4. Staff click **Accept** or **Deny** on the Discord card
+5. The applicant is automatically assigned the correct role and the card updates
+
+## Stack
+
+| Layer | Technology |
+|---|---|
+| Runtime | Node.js 22, ES Modules |
+| Discord | discord.js v14 |
+| Database | SQLite via `node:sqlite` (Node built-in, no compilation) |
+| HTTP | Express 5 |
+| Auth | Discord OAuth2 |
+
+## Project Structure
+
+```
+src/
+├── index.js        — Bot entry point, event handlers, health server
+├── commands.js     — All 35 slash command definitions and handlers
+├── setup.js        — Setup command handlers (/setup, /setup-roles, etc.)
+├── database.js     — SQLite schema + all DB helper functions
+├── dashboard.js    — Web dashboard + public apply page (Express routers)
+└── utils.js        — Shared helpers: embeds, permission checks, duration parsing
+
+data/
+└── bot.db          — SQLite database (auto-created on first run)
+```
+
+## Notes
+
+- The `node:sqlite` module emits an `ExperimentalWarning` on startup — this is expected and harmless
+- Slash commands are registered globally — changes can take up to 1 hour to propagate
+- Commands like `/warns`, `/messages`, `/balance`, and `/snipe` are intentionally open to all users and excluded from the role permission system
+- Admins always bypass role permission checks
