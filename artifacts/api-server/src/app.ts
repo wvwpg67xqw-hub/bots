@@ -1,8 +1,11 @@
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
+import session from "express-session";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { startBot } from "./bot/index";
+import { createDashboardRouter, createApplyRouter } from "./bot/dashboard";
 
 const app: Express = express();
 
@@ -11,23 +14,36 @@ app.use(
     logger,
     serializers: {
       req(req) {
-        return {
-          id: req.id,
-          method: req.method,
-          url: req.url?.split("?")[0],
-        };
+        return { id: req.id, method: req.method, url: req.url?.split("?")[0] };
       },
       res(res) {
-        return {
-          statusCode: res.statusCode,
-        };
+        return { statusCode: res.statusCode };
       },
     },
   }),
 );
+
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+app.use(
+  session({
+    secret: process.env["SESSION_SECRET"] ?? "discord-bot-secret-change-me",
+    resave: false,
+    saveUninitialized: false,
+    cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 },
+  }),
+);
+
+// Start the Discord bot and mount dashboard routes
+const client = startBot();
+
+app.use("/dashboard", createDashboardRouter(client));
+app.use("/apply", createApplyRouter(client));
+
+// Redirect root to dashboard
+app.get("/", (_req, res) => res.redirect("/dashboard"));
 
 app.use("/api", router);
 
