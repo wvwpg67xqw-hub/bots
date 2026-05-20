@@ -19,6 +19,7 @@ import {
   startBreak, endBreak, getCurrentBreaks,
   jailUser, unjailUser, isJailed,
   getGuildConfig,
+  getOrCreateReferralCode, getReferralStats, getReferralLeaderboard,
 } from "./database";
 import {
   successEmbed, errorEmbed, infoEmbed, warnEmbed,
@@ -700,6 +701,80 @@ async function sendModLog(
   await ch.send({ embeds: [embed] }).catch(() => {});
 }
 
+// ── /referral ──────────────────────────────────────────────────────────────
+const referralCmd: BotCommand = {
+  data: new SlashCommandBuilder()
+    .setName("referral")
+    .setDescription("View your referral link and stats")
+    .addUserOption(o => o.setName("user").setDescription("Check another user's stats (mod only)")) as any,
+  async execute(interaction) {
+    const target = interaction.options.getUser("user");
+    const isCheckingOther = !!target && target.id !== interaction.user.id;
+    if (isCheckingOther && !await checkPermissions(interaction, "referral")) {
+      return void interaction.reply({ embeds: [errorEmbed("You need mod permissions to check other users' referral stats.")], flags: 64 });
+    }
+    const user = target ?? interaction.user;
+    const guildId = interaction.guildId!;
+    const domains = process.env["REPLIT_DOMAINS"];
+    const domain = domains ? domains.split(",")[0].trim() : "your-domain";
+    const code = getOrCreateReferralCode(guildId, user.id);
+    const stats = getReferralStats(guildId, user.id);
+    const referralLink = `https://${domain}/refer/${code}`;
+    const recentList = stats.recent.length > 0
+      ? stats.recent.map(r => `• ${r.referred_name} — <t:${Math.floor(r.joined_at / 1000)}:R>`).join("\n")
+      : "No referrals yet.";
+    const embed = new EmbedBuilder()
+      .setColor(Colors.Green)
+      .setTitle(`🔗 Referral Stats — ${user.username}`)
+      .setThumbnail(user.displayAvatarURL())
+      .addFields(
+        { name: "Your Referral Link", value: `\`${referralLink}\`` },
+        { name: "Total Referrals", value: stats.total.toString(), inline: true },
+        { name: "Referral Code", value: `\`${code}\``, inline: true },
+        { name: "Recent Referrals", value: recentList },
+      )
+      .setFooter({ text: "Share your link to earn referral credit!" });
+    await interaction.reply({ embeds: [embed] });
+  }
+};
+
+// ── /referral-leaderboard ──────────────────────────────────────────────────
+const referralLBCmd: BotCommand = {
+  data: new SlashCommandBuilder()
+    .setName("referral-leaderboard")
+    .setDescription("Show the top referrers in this server") as any,
+  async execute(interaction) {
+    const top = getReferralLeaderboard(interaction.guildId!);
+    if (top.length === 0) {
+      return void interaction.reply({ embeds: [infoEmbed("No referrals recorded yet. Share your `/referral` link to get started!")] });
+    }
+    const lines = top.map((r, i) =>
+      `**${i + 1}.** <@${r.referrer_id}> — **${r.count}** referral${r.count !== 1 ? "s" : ""}`
+    ).join("\n");
+    await interaction.reply({ embeds: [infoEmbed(lines, "🔗 Referral Leaderboard")] });
+  }
+};
+
+// ── /setup-invite ──────────────────────────────────────────────────────────
+const setupInviteCmd: BotCommand = {
+  data: new SlashCommandBuilder()
+    .setName("setup-invite")
+    .setDescription("Set the server invite URL used in referral links")
+    .addStringOption(o => o.setName("invite").setDescription("Discord invite URL (e.g. https://discord.gg/abc)").setRequired(true)) as any,
+  async execute(interaction) {
+    if (!(interaction.member as any)?.permissions?.has("Administrator")) {
+      return void interaction.reply({ embeds: [errorEmbed("You need Administrator permission.")], flags: 64 });
+    }
+    const invite = interaction.options.getString("invite", true);
+    if (!invite.startsWith("https://discord.gg/") && !invite.startsWith("https://discord.com/invite/")) {
+      return void interaction.reply({ embeds: [errorEmbed("Please provide a valid Discord invite URL (starting with `https://discord.gg/`).")] });
+    }
+    const { setGuildConfigMulti } = await import("./database");
+    setGuildConfigMulti(interaction.guildId!, { invite_url: invite } as any);
+    await interaction.reply({ embeds: [successEmbed(`Server invite URL set to: ${invite}\n\nAll referral links will now redirect here.`, "✅ Invite URL Configured")] });
+  }
+};
+
 export const allCommands: BotCommand[] = [
   warnCmd, warnsCmd, warnLeaderboardCmd,
   adWarnCmd, removeAdWarnCmd,
@@ -714,4 +789,5 @@ export const allCommands: BotCommand[] = [
   currentBreaksCmd, breakCmd, breakEndCmd,
   resetMessagesCmd, resetMessagesAllCmd,
   banRequestCmd, blacklistRequestCmd, networkBanCmd, partnershipCmd,
+  referralCmd, referralLBCmd, setupInviteCmd,
 ];

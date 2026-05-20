@@ -114,6 +114,31 @@ export function initDb() {
       PRIMARY KEY (guild_id, user_id)
     );
 
+    CREATE TABLE IF NOT EXISTS referral_codes (
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      code TEXT NOT NULL UNIQUE,
+      invite_url TEXT,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (guild_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS referrals (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      guild_id TEXT NOT NULL,
+      referrer_id TEXT NOT NULL,
+      referred_name TEXT NOT NULL,
+      code TEXT NOT NULL,
+      joined_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS dashboard_admins (
+      user_id TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      granted_by TEXT NOT NULL,
+      granted_at INTEGER NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS application_forms (
       id TEXT PRIMARY KEY,
       guild_id TEXT NOT NULL,
@@ -370,6 +395,80 @@ export function isJailed(guildId: string, userId: string): boolean {
   return !!db.prepare(
     "SELECT 1 FROM jailed_users WHERE guild_id = ? AND user_id = ?"
   ).get(guildId, userId);
+}
+
+// Referrals
+export function getOrCreateReferralCode(guildId: string, userId: string, inviteUrl?: string): string {
+  const existing = db.prepare(
+    "SELECT code FROM referral_codes WHERE guild_id = ? AND user_id = ?"
+  ).get(guildId, userId) as { code: string } | undefined;
+  if (existing) {
+    if (inviteUrl) db.prepare("UPDATE referral_codes SET invite_url = ? WHERE guild_id = ? AND user_id = ?").run(inviteUrl, guildId, userId);
+    return existing.code;
+  }
+  const code = userId.slice(-6) + Math.random().toString(36).slice(2, 5);
+  db.prepare(
+    "INSERT INTO referral_codes (guild_id, user_id, code, invite_url, created_at) VALUES (?, ?, ?, ?, ?)"
+  ).run(guildId, userId, code, inviteUrl ?? null, Date.now());
+  return code;
+}
+
+export function getReferralCode(code: string) {
+  return db.prepare("SELECT * FROM referral_codes WHERE code = ?").get(code) as {
+    guild_id: string; user_id: string; code: string; invite_url: string | null; created_at: number;
+  } | undefined;
+}
+
+export function getUserReferralCode(guildId: string, userId: string) {
+  return db.prepare("SELECT * FROM referral_codes WHERE guild_id = ? AND user_id = ?").get(guildId, userId) as {
+    guild_id: string; user_id: string; code: string; invite_url: string | null;
+  } | undefined;
+}
+
+export function recordReferral(guildId: string, referrerId: string, referredName: string, code: string) {
+  db.prepare(
+    "INSERT INTO referrals (guild_id, referrer_id, referred_name, code, joined_at) VALUES (?, ?, ?, ?, ?)"
+  ).run(guildId, referrerId, referredName, code, Date.now());
+}
+
+export function getReferralStats(guildId: string, userId: string) {
+  const total = (db.prepare("SELECT COUNT(*) as c FROM referrals WHERE guild_id = ? AND referrer_id = ?").get(guildId, userId) as { c: number }).c;
+  const recent = db.prepare(
+    "SELECT * FROM referrals WHERE guild_id = ? AND referrer_id = ? ORDER BY joined_at DESC LIMIT 10"
+  ).all(guildId, userId) as { id: number; referred_name: string; joined_at: number }[];
+  return { total, recent };
+}
+
+export function getReferralLeaderboard(guildId: string, limit = 10) {
+  return db.prepare(
+    "SELECT referrer_id, COUNT(*) as count FROM referrals WHERE guild_id = ? GROUP BY referrer_id ORDER BY count DESC LIMIT ?"
+  ).all(guildId, limit) as { referrer_id: string; count: number }[];
+}
+
+export function setGuildInviteUrl(guildId: string, inviteUrl: string) {
+  setGuildConfigMulti(guildId, { invite_url: inviteUrl } as any);
+}
+
+// Dashboard admins
+export function addDashboardAdmin(userId: string, username: string, grantedBy: string) {
+  db.prepare(`
+    INSERT OR REPLACE INTO dashboard_admins (user_id, username, granted_by, granted_at)
+    VALUES (?, ?, ?, ?)
+  `).run(userId, username, grantedBy, Date.now());
+}
+
+export function removeDashboardAdmin(userId: string) {
+  db.prepare("DELETE FROM dashboard_admins WHERE user_id = ?").run(userId);
+}
+
+export function isDashboardAdmin(userId: string): boolean {
+  return !!db.prepare("SELECT 1 FROM dashboard_admins WHERE user_id = ?").get(userId);
+}
+
+export function getDashboardAdmins() {
+  return db.prepare("SELECT * FROM dashboard_admins ORDER BY granted_at DESC").all() as {
+    user_id: string; username: string; granted_by: string; granted_at: number;
+  }[];
 }
 
 // Application forms

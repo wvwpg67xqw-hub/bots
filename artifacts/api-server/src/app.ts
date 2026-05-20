@@ -5,7 +5,7 @@ import session from "express-session";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { startBot } from "./bot/index";
-import { createDashboardRouter, createApplyRouter } from "./bot/dashboard";
+import { createDashboardRouter, createApplyRouter, createReferRouter } from "./bot/dashboard";
 
 const app: Express = express();
 
@@ -41,6 +41,7 @@ const client = startBot();
 
 app.use("/dashboard", createDashboardRouter(client));
 app.use("/apply", createApplyRouter(client));
+app.use("/refer", createReferRouter());
 
 // Redirect root to dashboard
 app.get("/", (_req, res) => res.redirect("/dashboard"));
