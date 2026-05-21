@@ -42,10 +42,20 @@ function renderPage(title: string, content: string): string {
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>${escapeHtml(title)} — Dashboard</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>body{background:#111827}::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:#1f2937}::-webkit-scrollbar-thumb{background:#4b5563;border-radius:3px}</style>
+  <style>
+    body{background:#111827}
+    ::-webkit-scrollbar{width:6px}
+    ::-webkit-scrollbar-track{background:#1f2937}
+    ::-webkit-scrollbar-thumb{background:#4b5563;border-radius:3px}
+    * { -webkit-tap-highlight-color: transparent; }
+    input, select, textarea, button { font-size: 16px !important; }
+    @media (min-width: 640px) { input, select, textarea, button { font-size: 0.875rem !important; } }
+  </style>
 </head>
 <body class="min-h-screen bg-gray-900 text-gray-100 antialiased">
   ${content}
@@ -56,19 +66,23 @@ function renderPage(title: string, content: string): string {
 function ownerNav(username: string, avatar: string | null): string {
   const avatarUrl = avatar ? `https://cdn.discordapp.com/avatars/0/${avatar}.png` : null;
   return `<nav class="bg-gray-900 border-b border-gray-800 sticky top-0 z-10">
-    <div class="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
-      <div class="flex items-center gap-4">
-        <a href="/dashboard/owner" class="text-white font-bold text-base">🤖 Owner Panel</a>
-        <span class="text-gray-600">|</span>
-        <a href="/dashboard/owner/admins" class="text-gray-400 hover:text-white text-sm">Admins</a>
-      </div>
-      <div class="flex items-center gap-3">
-        <span class="bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs px-2 py-0.5 rounded-full font-medium">Owner</span>
-        <div class="flex items-center gap-2">
-          ${avatarUrl ? `<img src="${avatarUrl}" class="w-7 h-7 rounded-full" onerror="this.style.display='none'">` : ""}
-          <span class="text-gray-300 text-sm">${escapeHtml(username)}</span>
+    <div class="max-w-5xl mx-auto px-4">
+      <div class="h-14 flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2 min-w-0">
+          <a href="/dashboard/owner" class="text-white font-bold text-sm sm:text-base whitespace-nowrap">🤖 Owner Panel</a>
+          <a href="/dashboard/owner/admins" class="hidden sm:block text-gray-400 hover:text-white text-sm px-2 py-1 rounded hover:bg-gray-800 transition">Admins</a>
         </div>
-        <a href="/dashboard/auth/logout" class="text-gray-500 hover:text-gray-300 text-xs">Logout</a>
+        <div class="flex items-center gap-2 sm:gap-3 shrink-0">
+          <span class="bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs px-2 py-0.5 rounded-full font-medium hidden sm:inline">Owner</span>
+          <div class="flex items-center gap-1.5">
+            ${avatarUrl ? `<img src="${avatarUrl}" class="w-7 h-7 rounded-full" onerror="this.style.display='none'">` : `<div class="w-7 h-7 rounded-full bg-amber-600 flex items-center justify-center text-white text-xs font-bold">${escapeHtml((username || "?")[0]).toUpperCase()}</div>`}
+            <span class="text-gray-300 text-sm hidden sm:inline max-w-[120px] truncate">${escapeHtml(username)}</span>
+          </div>
+          <a href="/dashboard/auth/logout" class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded hover:bg-gray-800 transition whitespace-nowrap">Logout</a>
+        </div>
+      </div>
+      <div class="sm:hidden flex gap-3 pb-2 -mt-1 border-t border-gray-800 pt-2">
+        <a href="/dashboard/owner/admins" class="text-gray-400 hover:text-white text-xs px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 transition">Admins</a>
       </div>
     </div>
   </nav>`;
@@ -77,17 +91,17 @@ function ownerNav(username: string, avatar: string | null): string {
 function adminNav(username: string, avatar: string | null): string {
   const avatarUrl = avatar ? `https://cdn.discordapp.com/avatars/0/${avatar}.png` : null;
   return `<nav class="bg-gray-900 border-b border-gray-800 sticky top-0 z-10">
-    <div class="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
-      <div class="flex items-center gap-4">
-        <a href="/dashboard/admin" class="text-white font-bold text-base">🤖 Admin Panel</a>
-      </div>
-      <div class="flex items-center gap-3">
-        <span class="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-xs px-2 py-0.5 rounded-full font-medium">Admin</span>
-        <div class="flex items-center gap-2">
-          ${avatarUrl ? `<img src="${avatarUrl}" class="w-7 h-7 rounded-full" onerror="this.style.display='none'">` : ""}
-          <span class="text-gray-300 text-sm">${escapeHtml(username)}</span>
+    <div class="max-w-5xl mx-auto px-4">
+      <div class="h-14 flex items-center justify-between gap-2">
+        <a href="/dashboard/admin" class="text-white font-bold text-sm sm:text-base whitespace-nowrap">🤖 Admin Panel</a>
+        <div class="flex items-center gap-2 sm:gap-3 shrink-0">
+          <span class="bg-blue-500/20 text-blue-300 border border-blue-500/30 text-xs px-2 py-0.5 rounded-full font-medium hidden sm:inline">Admin</span>
+          <div class="flex items-center gap-1.5">
+            ${avatarUrl ? `<img src="${avatarUrl}" class="w-7 h-7 rounded-full" onerror="this.style.display='none'">` : `<div class="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold">${escapeHtml((username || "?")[0]).toUpperCase()}</div>`}
+            <span class="text-gray-300 text-sm hidden sm:inline max-w-[120px] truncate">${escapeHtml(username)}</span>
+          </div>
+          <a href="/dashboard/auth/logout" class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded hover:bg-gray-800 transition whitespace-nowrap">Logout</a>
         </div>
-        <a href="/dashboard/auth/logout" class="text-gray-500 hover:text-gray-300 text-xs">Logout</a>
       </div>
     </div>
   </nav>`;
@@ -96,19 +110,24 @@ function adminNav(username: string, avatar: string | null): string {
 function portalNav(username: string, avatar: string | null): string {
   const avatarUrl = avatar ? `https://cdn.discordapp.com/avatars/0/${avatar}.png` : null;
   return `<nav class="bg-gray-900 border-b border-gray-800 sticky top-0 z-10">
-    <div class="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
-      <div class="flex items-center gap-4">
-        <span class="text-white font-bold text-base">🤖 Staff Portal</span>
-        <span class="text-gray-600">|</span>
-        <a href="/dashboard/portal" class="text-gray-400 hover:text-white text-sm">Open Positions</a>
-        <a href="/dashboard/portal/my-apps" class="text-gray-400 hover:text-white text-sm">My Applications</a>
-      </div>
-      <div class="flex items-center gap-3">
-        <div class="flex items-center gap-2">
-          ${avatarUrl ? `<img src="${avatarUrl}" class="w-7 h-7 rounded-full" onerror="this.style.display='none'">` : ""}
-          <span class="text-gray-300 text-sm">${escapeHtml(username)}</span>
+    <div class="max-w-5xl mx-auto px-4">
+      <div class="h-14 flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="text-white font-bold text-sm sm:text-base whitespace-nowrap">🤖 Staff Portal</span>
+          <a href="/dashboard/portal" class="hidden sm:block text-gray-400 hover:text-white text-sm px-2 py-1 rounded hover:bg-gray-800 transition">Positions</a>
+          <a href="/dashboard/portal/my-apps" class="hidden sm:block text-gray-400 hover:text-white text-sm px-2 py-1 rounded hover:bg-gray-800 transition">My Apps</a>
         </div>
-        <a href="/dashboard/auth/logout" class="text-gray-500 hover:text-gray-300 text-xs">Logout</a>
+        <div class="flex items-center gap-2 sm:gap-3 shrink-0">
+          <div class="flex items-center gap-1.5">
+            ${avatarUrl ? `<img src="${avatarUrl}" class="w-7 h-7 rounded-full" onerror="this.style.display='none'">` : `<div class="w-7 h-7 rounded-full bg-indigo-600 flex items-center justify-center text-white text-xs font-bold">${escapeHtml((username || "?")[0]).toUpperCase()}</div>`}
+            <span class="text-gray-300 text-sm hidden sm:inline max-w-[120px] truncate">${escapeHtml(username)}</span>
+          </div>
+          <a href="/dashboard/auth/logout" class="text-gray-500 hover:text-gray-300 text-xs px-2 py-1 rounded hover:bg-gray-800 transition whitespace-nowrap">Logout</a>
+        </div>
+      </div>
+      <div class="sm:hidden flex gap-3 pb-2 -mt-1 border-t border-gray-800 pt-2">
+        <a href="/dashboard/portal" class="text-gray-400 hover:text-white text-xs px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 transition">Open Positions</a>
+        <a href="/dashboard/portal/my-apps" class="text-gray-400 hover:text-white text-xs px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 transition">My Applications</a>
       </div>
     </div>
   </nav>`;
@@ -349,9 +368,10 @@ export function createDashboardRouter(client: Client): Router {
         ${admins.length === 0
           ? `<div class="bg-gray-800 rounded-xl p-6 text-center border border-gray-700 border-dashed text-gray-400 mb-10">No admins granted yet. <a href="/dashboard/owner/admins" class="text-indigo-400 hover:underline">Add one</a></div>`
           : `<div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden mb-10">
-              <table class="w-full text-sm"><thead><tr class="text-left text-gray-400 border-b border-gray-700"><th class="py-3 px-4">Username</th><th class="py-3 px-4">User ID</th><th class="py-3 px-4">Granted</th></tr></thead>
+              <div class="overflow-x-auto">
+              <table class="w-full text-sm min-w-[480px]"><thead><tr class="text-left text-gray-400 border-b border-gray-700"><th class="py-3 px-4">Username</th><th class="py-3 px-4">User ID</th><th class="py-3 px-4">Granted</th></tr></thead>
               <tbody>${admins.map(a => `<tr class="border-t border-gray-700"><td class="py-3 px-4 text-white">${escapeHtml(a.username)}</td><td class="py-3 px-4 text-gray-400 font-mono text-xs">${a.user_id}</td><td class="py-3 px-4 text-gray-400">${new Date(a.granted_at).toLocaleDateString()}</td></tr>`).join("")}
-              </tbody></table></div>`
+              </tbody></table></div></div>`
         }
         <h2 class="text-xl font-semibold text-white mb-4">Servers</h2>
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -399,7 +419,7 @@ export function createDashboardRouter(client: Client): Router {
           </div>
           ${admins.length === 0
             ? `<div class="p-10 text-center text-gray-400">No admins yet.</div>`
-            : `<table class="w-full text-sm"><thead><tr class="text-left text-gray-400 border-b border-gray-700"><th class="py-3 px-4">Username</th><th class="py-3 px-4">User ID</th><th class="py-3 px-4">Granted</th><th class="py-3 px-4"></th></tr></thead><tbody>${rows}</tbody></table>`}
+            : `<div class="overflow-x-auto"><table class="w-full text-sm min-w-[520px]"><thead><tr class="text-left text-gray-400 border-b border-gray-700"><th class="py-3 px-4">Username</th><th class="py-3 px-4">User ID</th><th class="py-3 px-4">Granted</th><th class="py-3 px-4"></th></tr></thead><tbody>${rows}</tbody></table></div>`}
         </div>
       </div>`));
   });
@@ -785,9 +805,10 @@ export function createDashboardRouter(client: Client): Router {
         ${apps.length === 0
           ? `<div class="bg-gray-800 rounded-xl p-10 text-center border border-gray-700 border-dashed"><p class="text-gray-400">No submissions yet.</p></div>`
           : `<div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-              <table class="w-full"><thead><tr class="text-left text-gray-400 text-xs border-b border-gray-700">
+              <div class="overflow-x-auto">
+              <table class="w-full min-w-[420px]"><thead><tr class="text-left text-gray-400 text-xs border-b border-gray-700">
                 <th class="py-3 px-4">Applicant</th><th class="py-3 px-4">Status</th><th class="py-3 px-4">Date</th><th class="py-3 px-4"></th>
-              </tr></thead><tbody>${rows}</tbody></table></div>`}
+              </tr></thead><tbody>${rows}</tbody></table></div></div>`}
       </div>`));
   }
 
