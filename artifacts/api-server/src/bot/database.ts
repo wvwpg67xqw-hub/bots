@@ -165,6 +165,14 @@ export function initDb() {
       reviewed_at INTEGER,
       reviewer_id TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS application_blacklist (
+      user_id TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      blacklisted_by TEXT NOT NULL,
+      blacklisted_at INTEGER NOT NULL
+    );
   `);
 
   logger.info("Database initialized");
@@ -555,6 +563,26 @@ export function getAllActiveForms() {
     "SELECT * FROM application_forms WHERE active = 1 ORDER BY created_at DESC"
   ).all() as any[];
   return rows.map(r => ({ ...r, questions: JSON.parse(r.questions) }));
+}
+
+export function blacklistUser(userId: string, username: string, reason: string, blacklistedBy: string) {
+  db.prepare(
+    "INSERT INTO application_blacklist (user_id, username, reason, blacklisted_by, blacklisted_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET username=excluded.username, reason=excluded.reason, blacklisted_by=excluded.blacklisted_by, blacklisted_at=excluded.blacklisted_at"
+  ).run(userId, username, reason, blacklistedBy, Date.now());
+}
+
+export function unblacklistUser(userId: string) {
+  db.prepare("DELETE FROM application_blacklist WHERE user_id = ?").run(userId);
+}
+
+export function isBlacklisted(userId: string): boolean {
+  return !!(db.prepare("SELECT 1 FROM application_blacklist WHERE user_id = ?").get(userId));
+}
+
+export function getBlacklist() {
+  return db.prepare("SELECT * FROM application_blacklist ORDER BY blacklisted_at DESC").all() as {
+    user_id: string; username: string; reason: string; blacklisted_by: string; blacklisted_at: number;
+  }[];
 }
 
 export default db;
