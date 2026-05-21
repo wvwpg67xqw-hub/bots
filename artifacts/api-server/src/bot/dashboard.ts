@@ -7,6 +7,7 @@ import {
   addDashboardAdmin, removeDashboardAdmin, isDashboardAdmin, getDashboardAdmins,
   getReferralCode, recordReferral, getReferralLeaderboard,
   blacklistUser, unblacklistUser, isBlacklisted, getBlacklist,
+  getGuildConfig, setGuildConfig,
 } from "./database";
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, Colors } from "discord.js";
 import { generateId } from "./utils";
@@ -445,6 +446,14 @@ export function createDashboardRouter(client: Client): Router {
     if (!guild) { res.redirect("/dashboard/owner"); return; }
     const forms = getGuildForms(guildId);
     const lb = getReferralLeaderboard(guildId, 5);
+    const guildCfg = getGuildConfig(guildId);
+    const currentBlRole = (guildCfg?.blacklist_role as string) || "";
+
+    const roleOptions = guild.roles.cache
+      .filter(r => !r.managed && r.name !== "@everyone")
+      .sort((a, b) => b.position - a.position)
+      .map(r => `<option value="${r.id}"${r.id === currentBlRole ? " selected" : ""}>${escapeHtml(r.name)}</option>`)
+      .join("");
 
     const formCards = forms.map(f => `
       <div class="bg-gray-800 rounded-xl p-5 border border-gray-700">
@@ -488,12 +497,37 @@ export function createDashboardRouter(client: Client): Router {
               ? `<div class="bg-gray-800 rounded-xl p-10 text-center border border-gray-700 border-dashed"><div class="text-3xl mb-2">📋</div><p class="text-gray-400 text-sm mb-3">No application forms yet.</p><a href="/dashboard/owner/guild/${guildId}/form/new" class="px-4 py-2 bg-indigo-600 rounded-lg text-white text-sm hover:bg-indigo-500">Create one</a></div>`
               : `<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">${formCards}</div>`}
           </div>
-          <div>
-            <h2 class="text-lg font-semibold text-white mb-4">🔗 Referral Leaderboard</h2>
-            <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">${lbRows}</div>
+          <div class="space-y-6">
+            <div>
+              <h2 class="text-lg font-semibold text-white mb-4">🔗 Referral Leaderboard</h2>
+              <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">${lbRows}</div>
+            </div>
+            <div>
+              <h2 class="text-lg font-semibold text-white mb-4">⚙️ Settings</h2>
+              <div class="bg-gray-800 rounded-xl border border-gray-700 p-4 space-y-4">
+                <div>
+                  <label class="block text-xs font-medium text-gray-300 mb-1">🚫 Blacklist Permission Role</label>
+                  <p class="text-xs text-gray-500 mb-2">Admins with this Discord role can blacklist applicants. Leave blank for owner-only.</p>
+                  <form method="POST" action="/dashboard/owner/guild/${guildId}/settings/blacklist-role" class="flex gap-2">
+                    <select name="role_id" class="flex-1 min-w-0 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-indigo-500">
+                      <option value="">— Owner only —</option>
+                      ${roleOptions}
+                    </select>
+                    <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-white text-sm font-medium whitespace-nowrap transition">Save</button>
+                  </form>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>`));
+  });
+
+  router.post("/owner/guild/:guildId/settings/blacklist-role", requireOwner, (req: any, res) => {
+    const { guildId } = req.params;
+    const roleId = (req.body.role_id as string || "").trim();
+    setGuildConfig(guildId, "blacklist_role", roleId);
+    res.redirect(`/dashboard/owner/guild/${guildId}`);
   });
 
   router.post("/owner/guild/:guildId/leave", requireOwner, async (req: any, res) => {
@@ -544,8 +578,8 @@ export function createDashboardRouter(client: Client): Router {
     renderSubmissions(req, res, req.params.guildId, req.params.formId, "owner");
   });
 
-  router.get("/owner/guild/:guildId/application/:appId", requireOwner, (req: any, res) => {
-    renderApplication(req, res, req.params.guildId, req.params.appId, "owner");
+  router.get("/owner/guild/:guildId/application/:appId", requireOwner, async (req: any, res) => {
+    await renderApplication(req, res, req.params.guildId, req.params.appId, "owner", true);
   });
 
   router.post("/owner/guild/:guildId/application/:appId/accept", requireOwner, async (req: any, res) => {
@@ -695,8 +729,23 @@ export function createDashboardRouter(client: Client): Router {
     renderSubmissions(req, res, req.params.guildId, req.params.formId, "admin");
   });
 
-  router.get("/admin/guild/:guildId/application/:appId", requireAdmin, (req: any, res) => {
-    renderApplication(req, res, req.params.guildId, req.params.appId, "admin");
+  router.get("/admin/guild/:guildId/application/:appId", requireAdmin, async (req: any, res) => {
+    const { guildId, appId } = req.params;
+    let canBlacklist = false;
+    if (isOwner(req.session.userId)) {
+      canBlacklist = true;
+    } else {
+      const config = getGuildConfig(guildId);
+      const blRole = config?.blacklist_role as string | undefined;
+      if (blRole) {
+        try {
+          const guild = client.guilds.cache.get(guildId);
+          const member = await guild?.members.fetch(req.session.userId);
+          canBlacklist = member?.roles.cache.has(blRole) ?? false;
+        } catch { }
+      }
+    }
+    await renderApplication(req, res, guildId, appId, "admin", canBlacklist);
   });
 
   router.post("/admin/guild/:guildId/application/:appId/accept", requireAdmin, async (req: any, res) => {
@@ -910,14 +959,87 @@ export function createDashboardRouter(client: Client): Router {
       </div>`));
   }
 
-  function renderApplication(req: any, res: any, guildId: string, appId: string, role: "owner" | "admin") {
+  async function renderApplication(req: any, res: any, guildId: string, appId: string, role: "owner" | "admin", canBlacklist: boolean): Promise<void> {
     const app = getApplication(parseInt(appId));
-    if (!app) return res.redirect(`/dashboard/${role}`);
+    if (!app) return void res.redirect(`/dashboard/${role}`);
+
+    const blacklisted = isBlacklisted(app.user_id);
     const answerHtml = Object.entries(app.answers as Record<string, string>).map(([q, a]) => `
       <div class="mb-4">
         <div class="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1">${escapeHtml(q)}</div>
         <div class="bg-gray-700/50 rounded-lg p-3 text-gray-200 text-sm">${escapeHtml(a || "—")}</div>
       </div>`).join("");
+
+    // ── Action buttons ──────────────────────────────────────────────────────
+    let actionHtml = "";
+    if (app.status === "pending") {
+      const blBtn = canBlacklist
+        ? blacklisted
+          ? `<form method="POST" action="/dashboard/${role}/guild/${guildId}/application/${appId}/unblacklist">
+               <button class="px-5 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-gray-300 font-medium text-sm transition">✅ Unblacklist</button>
+             </form>`
+          : `<button type="button" onclick="document.getElementById('bl-${appId}').classList.toggle('hidden')"
+               class="px-5 py-2 bg-gray-800 hover:bg-red-900/60 border border-gray-600 hover:border-red-700 rounded-lg text-gray-400 hover:text-red-300 font-medium text-sm transition">
+               🚫 Blacklist
+             </button>`
+        : "";
+
+      actionHtml = `
+        <div class="mt-6 pt-6 border-t border-gray-700 space-y-3">
+          <div class="flex flex-wrap gap-3 items-center">
+            <form method="POST" action="/dashboard/${role}/guild/${guildId}/application/${appId}/accept">
+              <button class="px-5 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-white font-medium text-sm transition">✅ Accept</button>
+            </form>
+            <form method="POST" action="/dashboard/${role}/guild/${guildId}/application/${appId}/deny">
+              <button class="px-5 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-white font-medium text-sm transition">❌ Deny</button>
+            </form>
+            ${blBtn}
+          </div>
+          ${canBlacklist && !blacklisted ? `
+          <div id="bl-${appId}" class="hidden">
+            <form method="POST" action="/dashboard/${role}/guild/${guildId}/application/${appId}/blacklist"
+                  onsubmit="return confirm('Blacklist ${escapeHtml(app.username)} from all future applications?')">
+              <div class="flex gap-2 flex-wrap">
+                <input type="text" name="reason" placeholder="Reason (optional)"
+                  class="flex-1 min-w-0 bg-gray-700 border border-red-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-red-500" />
+                <button type="submit"
+                  class="px-4 py-2 bg-red-700 hover:bg-red-600 rounded-lg text-white text-sm font-medium whitespace-nowrap">Confirm Blacklist</button>
+              </div>
+            </form>
+          </div>` : ""}
+        </div>`;
+    } else {
+      const blToggle = canBlacklist
+        ? blacklisted
+          ? `<form method="POST" action="/dashboard/${role}/guild/${guildId}/application/${appId}/unblacklist" class="mt-3">
+               <button class="px-4 py-1.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-gray-300 text-xs font-medium transition">✅ Unblacklist User</button>
+             </form>`
+          : `<button type="button" onclick="document.getElementById('bl2-${appId}').classList.toggle('hidden')"
+               class="mt-3 px-4 py-1.5 bg-gray-800 hover:bg-red-900/60 border border-gray-600 hover:border-red-700 rounded-lg text-gray-400 hover:text-red-300 text-xs font-medium transition">
+               🚫 Blacklist User
+             </button>
+             <div id="bl2-${appId}" class="hidden mt-2">
+               <form method="POST" action="/dashboard/${role}/guild/${guildId}/application/${appId}/blacklist"
+                     onsubmit="return confirm('Blacklist ${escapeHtml(app.username)} from all future applications?')">
+                 <div class="flex gap-2 flex-wrap">
+                   <input type="text" name="reason" placeholder="Reason (optional)"
+                     class="flex-1 min-w-0 bg-gray-700 border border-red-700/50 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-red-500" />
+                   <button type="submit" class="px-4 py-2 bg-red-700 hover:bg-red-600 rounded-lg text-white text-sm font-medium whitespace-nowrap">Confirm</button>
+                 </div>
+               </form>
+             </div>`
+        : "";
+
+      actionHtml = `
+        <div class="mt-6 pt-6 border-t border-gray-700">
+          <p class="text-xs text-gray-500">Reviewed ${app.reviewed_at ? new Date(app.reviewed_at).toLocaleString() : ""}</p>
+          ${blToggle}
+        </div>`;
+    }
+
+    const blacklistBadge = blacklisted
+      ? `<span class="px-2 py-0.5 rounded text-xs bg-red-900/60 text-red-300 border border-red-800">🚫 Blacklisted</span>`
+      : "";
 
     const nav = role === "owner" ? ownerNav(req.session.username, req.session.avatar) : adminNav(req.session.username, req.session.avatar);
     res.send(renderPage("Application", nav + `
@@ -925,35 +1047,18 @@ export function createDashboardRouter(client: Client): Router {
         <a href="/dashboard/${role}/guild/${guildId}/form/${app.form_id}/submissions" class="text-gray-400 hover:text-white text-sm mb-6 block">← Back to Submissions</a>
         <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
           <div class="flex justify-between items-start mb-6">
-            <div>
-              <h1 class="text-xl font-bold text-white">${escapeHtml(app.username)}</h1>
-              <div class="text-xs text-gray-400 mt-1 font-mono">${app.user_id}</div>
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 flex-wrap mb-1">
+                <h1 class="text-xl font-bold text-white">${escapeHtml(app.username)}</h1>
+                ${blacklistBadge}
+              </div>
+              <div class="text-xs text-gray-400 font-mono">${app.user_id}</div>
               <div class="text-xs text-gray-400">${new Date(app.submitted_at).toLocaleString()}</div>
             </div>
-            <span class="px-3 py-1 rounded-full text-sm font-medium ${app.status === "accepted" ? "bg-green-900 text-green-300" : app.status === "denied" ? "bg-red-900 text-red-300" : "bg-yellow-900 text-yellow-300"}">${app.status}</span>
+            <span class="shrink-0 px-3 py-1 rounded-full text-sm font-medium ${app.status === "accepted" ? "bg-green-900 text-green-300" : app.status === "denied" ? "bg-red-900 text-red-300" : "bg-yellow-900 text-yellow-300"}">${app.status}</span>
           </div>
           ${answerHtml}
-          <div class="mt-6 pt-6 border-t border-gray-700 space-y-3">
-            ${app.status === "pending" ? `
-              <div class="flex flex-wrap gap-3">
-                <form method="POST" action="/dashboard/${role}/guild/${guildId}/application/${appId}/accept">
-                  <button class="px-5 py-2 bg-green-600 rounded-lg text-white hover:bg-green-500 font-medium text-sm">✅ Accept</button>
-                </form>
-                <form method="POST" action="/dashboard/${role}/guild/${guildId}/application/${appId}/deny">
-                  <button class="px-5 py-2 bg-red-600 rounded-lg text-white hover:bg-red-500 font-medium text-sm">❌ Deny</button>
-                </form>
-              </div>` : `<p class="text-xs text-gray-500">Reviewed ${app.reviewed_at ? new Date(app.reviewed_at).toLocaleString() : ""}</p>`}
-            ${isBlacklisted(app.user_id)
-              ? `<form method="POST" action="/dashboard/${role}/guild/${guildId}/application/${appId}/unblacklist" onsubmit="return confirm('Remove ${escapeHtml(app.username)} from the application blacklist?')">
-                  <button class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-gray-300 text-sm font-medium border border-gray-600">✅ Remove from Blacklist</button>
-                </form>`
-              : `<form method="POST" action="/dashboard/${role}/guild/${guildId}/application/${appId}/blacklist" onsubmit="return confirm('Blacklist ${escapeHtml(app.username)} from all future applications?')">
-                  <div class="flex flex-wrap gap-2 items-center">
-                    <input type="text" name="reason" placeholder="Reason (optional)" class="flex-1 min-w-0 bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-red-500" />
-                    <button class="px-4 py-2 bg-red-800 hover:bg-red-700 rounded-lg text-red-200 text-sm font-medium border border-red-700 whitespace-nowrap">🚫 Blacklist User</button>
-                  </div>
-                </form>`}
-          </div>
+          ${actionHtml}
         </div>
       </div>`));
   }

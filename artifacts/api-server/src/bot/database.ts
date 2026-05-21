@@ -175,6 +175,9 @@ export function initDb() {
     );
   `);
 
+  // Migrations — safe to run on existing DBs
+  try { db.exec("ALTER TABLE guild_config ADD COLUMN blacklist_role TEXT"); } catch { }
+
   logger.info("Database initialized");
 }
 
