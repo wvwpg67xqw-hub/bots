@@ -832,16 +832,44 @@ export function createDashboardRouter(client: Client): Router {
     const role = req.originalUrl.includes("/owner/") ? "owner" : "admin";
     const app = getApplication(parseInt(appId));
     if (!app) return res.redirect(`/dashboard/${role}/guild/${guildId}`);
+
     updateApplicationStatus(parseInt(appId), status, req.session.userId);
+
     const form = getForm(app.form_id);
+    const guild = client.guilds.cache.get(guildId);
+
+    // Assign role
     const roleId = status === "accepted" ? form?.accept_role : form?.deny_role;
-    if (roleId) {
+    if (roleId && guild) {
       try {
-        const guild = client.guilds.cache.get(guildId);
-        const member = await guild?.members.fetch(app.user_id);
-        await member?.roles.add(roleId);
+        const member = await guild.members.fetch(app.user_id);
+        await member.roles.add(roleId);
       } catch { }
     }
+
+    // DM the applicant
+    try {
+      const applicant = await client.users.fetch(app.user_id);
+      const isAccepted = status === "accepted";
+      const embed = new EmbedBuilder()
+        .setColor(isAccepted ? Colors.Green : Colors.Red)
+        .setTitle(isAccepted ? "✅ Application Accepted!" : "❌ Application Denied")
+        .setDescription(
+          isAccepted
+            ? `Congratulations! Your application for **${form?.name ?? "the position"}** has been **accepted**.${guild ? `\n\n📍 **Server:** ${guild.name}` : ""}`
+            : `Unfortunately, your application for **${form?.name ?? "the position"}** has been **denied**.${guild ? `\n\n📍 **Server:** ${guild.name}` : ""}`
+        )
+        .setFooter({ text: `Application ID: ${appId}` })
+        .setTimestamp();
+
+      if (isAccepted && roleId && guild) {
+        const assignedRole = guild.roles.cache.get(roleId);
+        if (assignedRole) embed.addFields({ name: "Role Assigned", value: `@${assignedRole.name}`, inline: true });
+      }
+
+      await applicant.send({ embeds: [embed] });
+    } catch { /* user has DMs closed or blocked the bot */ }
+
     res.redirect(`/dashboard/${role}/guild/${guildId}/application/${appId}`);
   }
 
