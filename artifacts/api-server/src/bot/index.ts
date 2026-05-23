@@ -1,4 +1,3 @@
-import express from "express";
 import {
   Client,
   GatewayIntentBits,
@@ -16,145 +15,75 @@ import {
   getApplication,
   updateApplicationStatus,
   getForm,
-} from "./database";
+} from "../database";
 
-import { allCommands } from "./commands";
-import { setupCommands } from "./setup";
-import { registerCommands } from "./register";
-import { logger } from "../lib/logger";
+import { allCommands } from "../commands";
+import { setupCommands } from "../setup";
+import { registerCommands } from "../register";
+import { logger } from "../../lib/logger";
 
 const ALL_COMMANDS = [...setupCommands, ...allCommands];
 
 export function startBot(): Client {
-  // =========================
-  // DATABASE
-  // =========================
+  // =====================
+  // INIT DB
+  // =====================
   initDb();
 
-  // =========================
-  // EXPRESS HEALTH SERVER
-  // =========================
-  const app = express();
-
-  app.get("/", (_req, res) => {
-    res.send("Bot is online.");
-  });
-
-  app.get("/healthz", (_req, res) => {
-    res.status(200).json({
-      status: "ok",
-      uptime: process.uptime(),
-      timestamp: new Date().toISOString(),
-    });
-  });
-
-  const PORT = Number(process.env["PORT"]) || 3000;
-
-  app.listen(PORT, "0.0.0.0", () => {
-    logger.info(`Health server running on port ${PORT}`);
-  });
-
-  // =========================
-  // DISCORD CLIENT
-  // =========================
+  // =====================
+  // CLIENT
+  // =====================
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMembers,
       GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.GuildModeration,
       GatewayIntentBits.MessageContent,
     ],
     partials: [Partials.Message, Partials.Channel],
   });
 
   const commandMap = new Map(
-    ALL_COMMANDS.map((c) => [c.data.name, c]),
+    ALL_COMMANDS.map((cmd) => [cmd.data.name, cmd]),
   );
 
-  // =========================
-  // BOT READY
-  // =========================
+  // =====================
+  // READY EVENT
+  // =====================
   client.once(Events.ClientReady, async (c) => {
     logger.info(
-      {
-        tag: c.user.tag,
-        guilds: c.guilds.cache.size,
-      },
-      "Discord bot ready",
+      { tag: c.user.tag, guilds: c.guilds.cache.size },
+      "Bot ready",
     );
 
     await registerCommands(ALL_COMMANDS);
   });
 
-  // =========================
-  // BOT ADDED TO SERVER
-  // =========================
+  // =====================
+  // GUILD JOIN
+  // =====================
   client.on(Events.GuildCreate, async (guild) => {
     logger.info(
-      {
-        guild: guild.name,
-        id: guild.id,
-      },
-      "Bot added to new server",
-    );
-
-    const ownerId = process.env["OWNER_ID"];
-
-    if (ownerId) {
-      try {
-        const owner = await client.users.fetch(ownerId);
-
-        await owner.send(
-          `🆕 **Bot added to a new server!**
-
-**Server:** ${guild.name}
-**Members:** ${guild.memberCount}
-**Server ID:** \`${guild.id}\`
-
-Manage it from the dashboard.
-
-Use \`/setup\` in the server to configure it.
-
-If you didn't authorize this, you can remove the bot from the Owner Panel.`,
-        );
-      } catch {}
-    }
-  });
-
-  // =========================
-  // BOT REMOVED FROM SERVER
-  // =========================
-  client.on(Events.GuildDelete, (guild) => {
-    logger.info(
-      {
-        guild: guild.name,
-        id: guild.id,
-      },
-      "Bot removed from server",
+      { guild: guild.name, id: guild.id },
+      "Joined new server",
     );
   });
 
-  // =========================
-  // MESSAGE CREATE
-  // =========================
+  // =====================
+  // MESSAGE TRACKING
+  // =====================
   client.on(Events.MessageCreate, (message) => {
-    if (message.author.bot || !message.guild) return;
+    if (!message.guild || message.author.bot) return;
 
     incrementMessages(message.guild.id, message.author.id);
   });
 
-  // =========================
-  // MESSAGE DELETE / SNIPE
-  // =========================
+  // =====================
+  // SNIPE SYSTEM
+  // =====================
   client.on(Events.MessageDelete, (message) => {
-    if (
-      !message.guild ||
-      !message.content ||
-      message.author?.bot
-    ) {
-      return;
-    }
+    if (!message.guild || message.author?.bot) return;
+    if (!message.content) return;
 
     setSnipe(
       message.guild.id,
@@ -165,56 +94,43 @@ If you didn't authorize this, you can remove the bot from the Owner Panel.`,
     );
   });
 
-  // =========================
+  // =====================
   // INTERACTIONS
-  // =========================
+  // =====================
   client.on(
     Events.InteractionCreate,
     async (interaction: Interaction) => {
-      // ---------------------
       // SLASH COMMANDS
-      // ---------------------
       if (interaction.isChatInputCommand()) {
         const cmd = commandMap.get(interaction.commandName);
-
         if (!cmd) return;
 
         try {
           await cmd.execute(interaction);
         } catch (err) {
           logger.error(
-            {
-              err,
-              command: interaction.commandName,
-            },
+            { err },
             "Command error",
           );
 
-          const msg = {
+          const errorMsg = {
             embeds: [
               new EmbedBuilder()
                 .setColor(Colors.Red)
-                .setDescription(
-                  "❌ An error occurred while running this command.",
-                ),
+                .setDescription("❌ Something went wrong."),
             ],
             flags: 64 as const,
           };
 
-          if (
-            interaction.replied ||
-            interaction.deferred
-          ) {
-            await interaction.followUp(msg).catch(() => {});
+          if (interaction.replied || interaction.deferred) {
+            await interaction.followUp(errorMsg).catch(() => {});
           } else {
-            await interaction.reply(msg).catch(() => {});
+            await interaction.reply(errorMsg).catch(() => {});
           }
         }
       }
 
-      // ---------------------
-      // APPLICATION BUTTONS
-      // ---------------------
+      // BUTTONS (applications)
       if (interaction.isButton()) {
         const { customId } = interaction;
 
@@ -226,22 +142,19 @@ If you didn't authorize this, you can remove the bot from the Owner Panel.`,
             ? "accepted"
             : "denied";
 
-          const appId = parseInt(
-            customId.split("_")[2],
-          );
+          const appId = Number(customId.split("_")[2]);
 
           const app = getApplication(appId);
-
           if (!app) {
-            return void interaction.reply({
+            return interaction.reply({
               content: "Application not found.",
               flags: 64,
             });
           }
 
           if (app.status !== "pending") {
-            return void interaction.reply({
-              content: `This application has already been ${app.status}.`,
+            return interaction.reply({
+              content: `Already ${app.status}.`,
               flags: 64,
             });
           }
@@ -263,9 +176,7 @@ If you didn't authorize this, you can remove the bot from the Owner Panel.`,
           if (roleId && interaction.guild) {
             try {
               const member =
-                await interaction.guild.members.fetch(
-                  app.user_id,
-                );
+                await interaction.guild.members.fetch(app.user_id);
 
               await member.roles.add(roleId);
             } catch {}
@@ -278,15 +189,15 @@ If you didn't authorize this, you can remove the bot from the Owner Panel.`,
 
           const label =
             status === "accepted"
-              ? "✅ Accepted"
-              : "❌ Denied";
+              ? "Accepted"
+              : "Denied";
 
           const embed = EmbedBuilder.from(
             interaction.message.embeds[0],
           )
             .setColor(color)
             .setFooter({
-              text: `${label} by ${interaction.user.tag} • App ID: ${appId}`,
+              text: `${label} by ${interaction.user.tag}`,
             });
 
           await interaction.update({
@@ -298,24 +209,18 @@ If you didn't authorize this, you can remove the bot from the Owner Panel.`,
     },
   );
 
-  // =========================
+  // =====================
   // LOGIN
-  // =========================
+  // =====================
   const token = process.env["TOKEN"];
 
   if (!token) {
-    logger.error(
-      "TOKEN environment variable is not set — bot will not start",
-    );
-
+    logger.error("Missing TOKEN");
     return client;
   }
 
   client.login(token).catch((err) => {
-    logger.error(
-      { err },
-      "Failed to login to Discord",
-    );
+    logger.error({ err }, "Login failed");
   });
 
   return client;
