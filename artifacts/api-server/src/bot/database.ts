@@ -209,11 +209,34 @@ export function setGuildConfigMulti(guildId: string, fields: Record<string, stri
   }
 }
 
-export function getCommandPermissions(guildId: string, commandName: string): string[] {
-  const rows = db.prepare(
-    "SELECT role_id FROM command_permissions WHERE guild_id = ? AND command_name = ?"
-  ).all(guildId, commandName) as { role_id: string }[];
-  return rows.map(r => r.role_id);
+export function getCommandPermissions(
+  guildId: string,
+  commandName: string
+): string[] {
+  // 1. command-specific permissions (highest priority)
+  const rows = db
+    .prepare(
+      "SELECT role_id FROM command_permissions WHERE guild_id = ? AND command_name = ?"
+    )
+    .all(guildId, commandName) as { role_id: string }[];
+
+  const commandRoles = rows.map(r => r.role_id);
+
+  // 2. guild role config fallback
+  const config = getGuildConfig(guildId);
+
+  const fallbackRoles = [
+    config?.owner_role,
+    config?.admin_role,
+    config?.management_role,
+    config?.staff_role,
+    config?.mod_role,
+    config?.junior_mod_role,
+    config?.trial_mod_role,
+  ].filter(Boolean) as string[];
+
+  // 3. merge + remove duplicates
+  return [...new Set([...commandRoles, ...fallbackRoles])];
 }
 
 export function setCommandPermission(guildId: string, commandName: string, roleId: string) {

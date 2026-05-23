@@ -3,28 +3,26 @@ import {
   GatewayIntentBits,
   Partials,
   Events,
-  type Interaction,
+  type ChatInputCommandInteraction,
   Colors,
   EmbedBuilder,
+  type Interaction,
 } from "discord.js";
 
-import { initDb } from "./database";
-import { allCommands } from "./commands";
+import { initDb, getCommandPermissions } from "./database";
+import { allCommands } from "./commands"; // ✅ FIXED (THIS is the correct entry)
 import { setupCommands } from "./setup";
 import { registerCommands } from "./register";
 import { logger } from "../lib/logger";
 
 const ALL_COMMANDS = [...setupCommands, ...allCommands];
 
+// =====================
+// BOT START
+// =====================
 export function startBot(): Client {
-  // =====================
-  // INIT DATABASE
-  // =====================
   initDb();
 
-  // =====================
-  // DISCORD CLIENT
-  // =====================
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -36,7 +34,7 @@ export function startBot(): Client {
   });
 
   const commandMap = new Map(
-    ALL_COMMANDS.map((cmd) => [cmd.data.name, cmd]),
+    ALL_COMMANDS.map((cmd) => [cmd.data.name, cmd])
   );
 
   // =====================
@@ -45,19 +43,23 @@ export function startBot(): Client {
   client.once(Events.ClientReady, async (c) => {
     logger.info(
       { tag: c.user.tag, guilds: c.guilds.cache.size },
-      "Bot ready",
+      "Bot ready"
     );
 
-    await registerCommands(ALL_COMMANDS);
+    try {
+      await registerCommands(ALL_COMMANDS);
+      logger.info("Slash commands registered");
+    } catch (err) {
+      logger.error({ err }, "Failed to register commands");
+    }
   });
 
   // =====================
-  // MESSAGE TRACKING
+  // MESSAGE TRACKING (optional)
   // =====================
   client.on(Events.MessageCreate, (message) => {
     if (!message.guild || message.author.bot) return;
 
-    // optional: if you use message stats in database.ts
     try {
       // incrementMessages(message.guild.id, message.author.id);
     } catch {}
@@ -71,7 +73,7 @@ export function startBot(): Client {
     if (!message.content) return;
 
     try {
-      // setSnipe(message.guild.id, message.channel.id, ...)
+      // setSnipe(message.guild.id, message.channel.id, message.content, message.author.tag);
     } catch {}
   });
 
@@ -79,34 +81,74 @@ export function startBot(): Client {
   // INTERACTIONS
   // =====================
   client.on(Events.InteractionCreate, async (interaction: Interaction) => {
+    // =====================
     // SLASH COMMANDS
+    // =====================
     if (interaction.isChatInputCommand()) {
       const cmd = commandMap.get(interaction.commandName);
       if (!cmd) return;
 
+      const member = interaction.member;
+
+      if (!member || !("roles" in member)) {
+        return interaction.reply({
+          content: "❌ Cannot verify permissions.",
+          flags: 64,
+        });
+      }
+
       try {
-        await cmd.execute(interaction);
+        const allowedRoles = getCommandPermissions(
+          interaction.guildId!,
+          interaction.commandName
+        );
+
+        const memberRoles = member.roles.cache.map(r => r.id);
+
+        // 👑 OWNER BYPASS
+        if (interaction.user.id === interaction.guild?.ownerId) {
+          return cmd.execute(interaction as ChatInputCommandInteraction);
+        }
+
+        // 🔒 ROLE CHECK
+        const hasPermission = memberRoles.some(role =>
+          allowedRoles.includes(role)
+        );
+
+        if (!hasPermission) {
+          return interaction.reply({
+            content: "❌ You don't have permission to use this command.",
+            flags: 64,
+          });
+        }
+
+        await cmd.execute(interaction as ChatInputCommandInteraction);
+
       } catch (err) {
         logger.error({ err }, "Command error");
 
-        const msg = {
+        const errorMsg = {
           embeds: [
             new EmbedBuilder()
               .setColor(Colors.Red)
-              .setDescription("❌ Something went wrong."),
+              .setDescription(
+                "❌ Something went wrong while running this command."
+              ),
           ],
           flags: 64 as const,
         };
 
         if (interaction.replied || interaction.deferred) {
-          await interaction.followUp(msg).catch(() => {});
+          await interaction.followUp(errorMsg).catch(() => {});
         } else {
-          await interaction.reply(msg).catch(() => {});
+          await interaction.reply(errorMsg).catch(() => {});
         }
       }
     }
 
-    // BUTTONS (applications system if you use it)
+    // =====================
+    // BUTTONS (APPLICATION SYSTEM)
+    // =====================
     if (interaction.isButton()) {
       const { customId } = interaction;
 
@@ -119,9 +161,6 @@ export function startBot(): Client {
           : "denied";
 
         const appId = Number(customId.split("_")[2]);
-
-        // If you still use DB functions, import them later
-        // const app = getApplication(appId);
 
         return interaction.reply({
           content: `Application ${status} (ID: ${appId})`,
@@ -137,12 +176,12 @@ export function startBot(): Client {
   const token = process.env["TOKEN"];
 
   if (!token) {
-    logger.error("Missing TOKEN");
+    logger.error("Missing TOKEN in environment variables");
     return client;
   }
 
   client.login(token).catch((err) => {
-    logger.error({ err }, "Login failed");
+    logger.error({ err }, "Bot login failed");
   });
 
   return client;
