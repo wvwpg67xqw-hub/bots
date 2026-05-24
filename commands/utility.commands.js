@@ -2,7 +2,8 @@ import { SlashCommandBuilder } from "discord.js";
 
 const snipe = {
   data: new SlashCommandBuilder()
-    .setName("snipe"),
+    .setName("snipe")
+    .setDescription("Shows the last deleted message"), // ✅ FIXED
 
   async execute(i) {
     i.reply("🧾 Snipe system placeholder (needs message tracking middleware)");
