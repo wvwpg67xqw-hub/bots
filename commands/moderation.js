@@ -216,7 +216,6 @@ moderationCommands.push({
     .addIntegerOption(o => o.setName("minutes").setRequired(true))
     .addStringOption(o => o.setName("reason")),
 
-  async execute(i) {
     if (!hasModAccess(i.member)) return silentFail(i);
 
     const u = i.options.getUser("user");

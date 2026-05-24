@@ -6,124 +6,134 @@ import {
   EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
-  ButtonStyle,
   REST,
   Routes,
 } from "discord.js";
 
 import { commands } from "./commands.js";
-import { loadJSON }  from "./storage.js";
-import { addCase }   from "./modlog.js";
+import { loadJSON } from "./storage.js";
+import { addCase } from "./modlog.js";
 
 const setupFile = "./setup.json";
 
-// =========================
-// CLIENT SETUP
-// =========================
+/* ───────────────────────
+   CLIENT
+─────────────────────── */
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers,   // needed for raidmode join-kick
+    GatewayIntentBits.GuildMembers,
   ],
 });
 
-client.commands  = new Collection();
-client.raidMode  = new Map();   // guildId → boolean
-client.snipeCache = new Map();  // channelId → { content, author, deletedAt }
+client.commands = new Collection();
+client.raidMode = new Map();
+client.snipeCache = new Map();
 
-// =========================
-// LOAD COMMANDS
-// =========================
+/* ───────────────────────
+   LOAD COMMANDS
+─────────────────────── */
 for (const cmd of commands ?? []) {
-  if (!cmd?.data || !cmd?.execute) { console.log("⚠️ Skipping invalid command"); continue; }
+  if (!cmd?.data || !cmd?.execute) continue;
   client.commands.set(cmd.data.name, cmd);
 }
+
 console.log(`📦 Loaded ${client.commands.size} commands`);
 
-// =========================
-// SNIPE — cache deleted messages
-// =========================
+/* ───────────────────────
+   SNIPE CACHE
+─────────────────────── */
 client.on("messageDelete", (message) => {
   if (!message.author || message.author.bot) return;
+
   client.snipeCache.set(message.channel.id, {
-    content:   message.content,
-    author:    message.author,
+    content: message.content,
+    author: message.author,
     deletedAt: Date.now(),
   });
 });
 
-// =========================
-// RAIDMODE — kick new joins when active
-// =========================
+/* ───────────────────────
+   RAID MODE
+─────────────────────── */
 client.on("guildMemberAdd", async (member) => {
   if (!client.raidMode.get(member.guild.id)) return;
 
-  await member.kick("Raid mode is active").catch(() => {});
+  await member.kick("Raid mode active").catch(() => null);
 
-  const cfg    = loadJSON(setupFile);
-  const logsCh = cfg.logsChannel ? member.guild.channels.cache.get(cfg.logsChannel) : null;
-  const modsCh = cfg.modsChannel ? member.guild.channels.cache.get(cfg.modsChannel) : null;
+  const cfg = loadJSON(setupFile);
 
   const embed = new EmbedBuilder()
     .setColor(0xff0000)
-    .setTitle("🚨 RAID MODE — JOIN BLOCKED")
-    .setThumbnail(member.user.displayAvatarURL())
+    .setTitle("🚨 RAID MODE ACTIVE")
     .addFields(
-      { name: "User",    value: `${member.user} (${member.user.tag})`, inline: true },
-      { name: "User ID", value: member.user.id,                        inline: true },
-      { name: "Action",  value: "Auto-kicked (raid mode on)" }
+      { name: "User", value: `${member.user.tag}`, inline: true },
+      { name: "ID", value: member.id, inline: true },
+      { name: "Action", value: "Auto-kicked" }
     )
     .setTimestamp();
 
-  if (logsCh) await logsCh.send({ embeds: [embed] }).catch(() => {});
-  if (modsCh) await modsCh.send({ embeds: [embed] }).catch(() => {});
+  const logs = cfg.logsChannel
+    ? member.guild.channels.cache.get(cfg.logsChannel)
+    : null;
+
+  if (logs) logs.send({ embeds: [embed] }).catch(() => {});
 });
 
-// =========================
-// READY — auto-register slash commands to all guilds
-// =========================
-client.once("ready", async () => {
+/* ───────────────────────
+   READY (FIXED DEPRECATED EVENT)
+─────────────────────── */
+client.once("clientReady", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 
   const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
+
   const body = commands.map(c => c.data.toJSON());
 
   for (const guild of client.guilds.cache.values()) {
     try {
-      await rest.put(Routes.applicationGuildCommands(client.user.id, guild.id), { body });
-      console.log(`✅ Registered ${body.length} commands in: ${guild.name}`);
+      await rest.put(
+        Routes.applicationGuildCommands(client.user.id, guild.id),
+        { body }
+      );
+
+      console.log(`✅ Registered ${body.length} commands in ${guild.name}`);
     } catch (err) {
-      console.error(`❌ Failed to register commands in ${guild.name}:`, err);
+      console.error(`❌ Failed in ${guild.name}`, err);
     }
   }
 });
 
-// =========================
-// INTERACTION HANDLER
-// =========================
+/* ───────────────────────
+   INTERACTIONS
+─────────────────────── */
 client.on("interactionCreate", async (interaction) => {
   try {
-
-    // ── Slash commands ──────────────────────────────────────
+    /* ── Slash Commands ── */
     if (interaction.isChatInputCommand()) {
       const cmd = client.commands.get(interaction.commandName);
-      if (!cmd) { console.log(`❌ Unknown command: ${interaction.commandName}`); return; }
-      await cmd.execute(interaction);
-      return;
+
+      if (!cmd) {
+        console.log(`❌ Unknown command: ${interaction.commandName}`);
+        return;
+      }
+
+      return await cmd.execute(interaction);
     }
 
-    // ── Button interactions (ban request panel) ─────────────
+    /* ── BUTTONS (BAN SYSTEM) ── */
     if (interaction.isButton()) {
       const [action, userId] = interaction.customId.split(":");
+
       if (!["ban_accept", "ban_reject", "ban_force"].includes(action)) return;
 
-      const cfg    = loadJSON(setupFile);
-      const logsId = cfg.logsChannel;
-      const netId  = cfg.networkLog;
+      const cfg = loadJSON(setupFile);
 
-      // Disable all buttons on the original message
+      const logsId = cfg.logsChannel;
+      const netId = cfg.networkLog;
+
       const disabledRow = new ActionRowBuilder().addComponents(
         ...interaction.message.components[0].components.map(btn =>
           ButtonBuilder.from(btn).setDisabled(true)
@@ -132,76 +142,83 @@ client.on("interactionCreate", async (interaction) => {
 
       if (action === "ban_reject") {
         const embed = new EmbedBuilder()
-          .setColor(0x95a5a6).setTitle("❌ BAN REQUEST REJECTED")
+          .setColor(0x95a5a6)
+          .setTitle("❌ BAN REJECTED")
           .addFields(
-            { name: "User ID",     value: userId },
-            { name: "Rejected by", value: interaction.user.tag }
-          ).setTimestamp();
+            { name: "User ID", value: userId },
+            { name: "By", value: interaction.user.tag }
+          )
+          .setTimestamp();
 
         await interaction.message.edit({ components: [disabledRow] });
-        await interaction.reply({ embeds: [embed] });
-
-        if (logsId) {
-          const ch = interaction.guild.channels.cache.get(logsId);
-          if (ch) await ch.send({ embeds: [embed] }).catch(() => {});
-        }
-        return;
+        return interaction.reply({ embeds: [embed] });
       }
 
-      // accept or force → execute ban
       const member = await interaction.guild.members.fetch(userId).catch(() => null);
-      const user   = await interaction.client.users.fetch(userId).catch(() => null);
-      const label  = action === "ban_force" ? "🔨 BAN FORCE-EXECUTED" : "✅ BAN REQUEST ACCEPTED";
-      const color  = action === "ban_force" ? 0xff0000 : 0x2ecc71;
+      const user = await interaction.client.users.fetch(userId).catch(() => null);
 
-      if (member) await member.ban({ reason: `Ban request approved by ${interaction.user.tag}` });
+      if (member) {
+        await member.ban({
+          reason: `Ban approved by ${interaction.user.tag}`,
+        });
+      }
 
       const caseId = addCase({
         guildId: interaction.guild.id,
-        type:    "NETWORK-BAN",
+        type: "NETWORK-BAN",
         userId,
-        userTag:  user?.tag ?? userId,
-        modId:    interaction.user.id,
-        modTag:   interaction.user.tag,
-        reason:  `Ban request ${action === "ban_force" ? "force-executed" : "accepted"} by ${interaction.user.tag}`,
+        userTag: user?.tag ?? userId,
+        modId: interaction.user.id,
+        modTag: interaction.user.tag,
+        reason: `Ban ${action} by ${interaction.user.tag}`,
       });
 
       const embed = new EmbedBuilder()
-        .setColor(color).setTitle(label)
+        .setColor(action === "ban_force" ? 0xff0000 : 0x2ecc71)
+        .setTitle(action === "ban_force"
+          ? "🔨 FORCE BAN"
+          : "✅ BAN APPROVED"
+        )
         .addFields(
-          { name: "User",        value: user ? `${user} (${user.tag})` : userId, inline: true },
-          { name: "User ID",     value: userId,                                   inline: true },
-          { name: "Case",        value: `#${caseId}`,                             inline: true },
-          { name: "Approved by", value: interaction.user.tag }
-        ).setTimestamp();
+          { name: "User", value: user ? user.tag : userId, inline: true },
+          { name: "Case", value: `#${caseId}`, inline: true },
+          { name: "By", value: interaction.user.tag }
+        )
+        .setTimestamp();
 
       await interaction.message.edit({ components: [disabledRow] });
-      await interaction.reply({ embeds: [embed] });
-
-      for (const chId of [logsId, netId]) {
-        if (!chId) continue;
-        const ch = interaction.guild.channels.cache.get(chId);
-        if (ch) await ch.send({ embeds: [embed] }).catch(() => {});
-      }
+      return interaction.reply({ embeds: [embed] });
     }
 
   } catch (err) {
     console.error("❌ Interaction error:", err);
-    try {
-      if (!interaction.replied && !interaction.deferred)
-        await interaction.reply({ content: "❌ Something went wrong.", ephemeral: true });
-    } catch {}
+
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({
+        content: "❌ Error occurred.",
+        ephemeral: true,
+      });
+    }
   }
 });
 
-// =========================
-// GLOBAL ERROR SAFETY
-// =========================
-process.on("unhandledRejection", (err) => console.error("⚠️ Unhandled Rejection:", err));
-process.on("uncaughtException",  (err) => console.error("⚠️ Uncaught Exception:",  err));
+/* ───────────────────────
+   SAFETY ERRORS (CLEAN)
+─────────────────────── */
+process.on("unhandledRejection", (err) => {
+  console.error("⚠️ Promise Error:", err);
+});
 
-// =========================
-// LOGIN
-// =========================
-if (!process.env.TOKEN) { console.error("❌ Missing TOKEN in .env"); process.exit(1); }
+process.on("uncaughtException", (err) => {
+  console.error("⚠️ Crash Error:", err);
+});
+
+/* ───────────────────────
+   LOGIN
+─────────────────────── */
+if (!process.env.TOKEN) {
+  console.error("❌ Missing TOKEN in .env");
+  process.exit(1);
+}
+
 client.login(process.env.TOKEN);
