@@ -3,6 +3,7 @@ import { Client, GatewayIntentBits, Collection } from "discord.js";
 
 import moderation from "./commands/moderation.commands.js";
 import ad from "./commands/ad.commands.js";
+import network from "./commands/network.commands.js";
 import utility from "./commands/utility.commands.js";
 import setup from "./commands/setup.commands.js";
 
@@ -17,10 +18,7 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// register all command groups
-const groups = [moderation, ad, utility, setup];
-
-for (const group of groups) {
+for (const group of [moderation, ad, network, utility, setup]) {
   for (const cmd of group) {
     client.commands.set(cmd.data.name, cmd);
   }
