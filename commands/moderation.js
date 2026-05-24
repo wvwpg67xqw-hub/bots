@@ -2,37 +2,48 @@ import {
   SlashCommandBuilder,
   EmbedBuilder,
   PermissionFlagsBits,
+  ChannelType,
 } from "discord.js";
 
 import { loadJSON, saveJSON } from "../storage.js";
-import { addCase } from "../modlog.js";
+import { addCase, getCasesForUser, getRecentCases } from "../modlog.js";
 import {
   addWarn,
   warnTime,
   logTo,
   setupFile,
   warnFile,
-  jailFile
+  jailFile,
 } from "./helpers.js";
 
 export const moderationCommands = [];
 
 /* ───────────────────────
-   ROLE ACCESS GATE (GLOBAL)
+   ROLE ACCESS
 ─────────────────────── */
 const allowedRoles = ["HRTL", "~~~staff~~~"];
 
 function hasModAccess(member) {
-  return member.roles.cache.some(role =>
-    allowedRoles.includes(role.name)
-  );
+  return member?.roles?.cache?.some(r => allowedRoles.includes(r.name));
 }
 
 function silentFail(i) {
   return i.reply({
-    content: "This application did not respond.",
+    content: "❌ You do not have permission to use this command.",
     ephemeral: true,
   });
+}
+
+function blockSelf(i, u) {
+  if (i.user.id === u.id) {
+    i.reply({ content: "❌ You cannot moderate yourself.", ephemeral: true });
+    return true;
+  }
+  return false;
+}
+
+function canTarget(mod, target) {
+  return mod.roles.highest.position > target.roles.highest.position;
 }
 
 /* ───────────────────────
@@ -41,18 +52,23 @@ function silentFail(i) {
 moderationCommands.push({
   data: new SlashCommandBuilder()
     .setName("warn")
-    .setDescription("Warn a user and apply an automatic escalating timeout")
-    .addUserOption(o => o.setName("user").setDescription("User to warn").setRequired(true))
+    .setDescription("Warn a user")
+    .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
     .addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
   async execute(i) {
-    if (!hasModAccess(i.member)) return silentFail(i);
-
     const u = i.options.getUser("user");
     const r = i.options.getString("reason");
 
-    const member = await i.guild.members.fetch(u.id);
+    if (!hasModAccess(i.member)) return silentFail(i);
+    if (blockSelf(i, u)) return;
+
+    const member = await i.guild.members.fetch(u.id).catch(() => null);
+    if (!member) return i.reply({ content: "User not found", ephemeral: true });
+    if (!canTarget(i.member, member))
+      return i.reply({ content: "❌ Cannot target this user", ephemeral: true });
+
     const count = addWarn(u.id);
     const mins = warnTime(count);
 
@@ -68,147 +84,149 @@ moderationCommands.push({
       reason: r,
     });
 
-    const embed = new EmbedBuilder()
-      .setColor(0xffcc00)
-      .setTitle("⚠️ USER WARNED")
-      .setThumbnail(u.displayAvatarURL())
-      .addFields(
-        { name: "User", value: `${u} (${u.tag})`, inline: true },
-        { name: "Moderator", value: `${i.user}`, inline: true },
-        { name: "Case", value: `#${caseId}`, inline: true },
-        { name: "Total Warnings", value: `${count}`, inline: true },
-        { name: "Timeout", value: `${mins} minutes`, inline: true },
-        { name: "Reason", value: r }
-      )
-      .setTimestamp();
+    await logTo(
+      i.guild,
+      "logsChannel",
+      new EmbedBuilder()
+        .setColor(0xffcc00)
+        .setTitle("⚠️ WARN")
+        .addFields(
+          { name: "User", value: u.tag, inline: true },
+          { name: "Case", value: `#${caseId}`, inline: true },
+          { name: "Warnings", value: `${count}`, inline: true },
+          { name: "Reason", value: r }
+        )
+    );
 
-    await logTo(i.guild, "logsChannel", embed);
-    await i.reply({ embeds: [embed] });
-  }
+    await i.reply({ content: `Warned ${u.tag} (#${caseId})`, ephemeral: true });
+  },
 });
 
 /* ───────────────────────
-   AD-WARN
+   AD-WARN (MESSAGE / THREAD + PRESETS)
 ─────────────────────── */
 moderationCommands.push({
   data: new SlashCommandBuilder()
     .setName("ad-warn")
-    .setDescription("Issue an advertisement violation warning (5-min timeout)")
-    .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
-    .addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(true))
+    .setDescription("Ad moderation via message or thread")
+    .addStringOption(o =>
+      o
+        .setName("reason")
+        .setDescription("Violation type")
+        .setRequired(true)
+        .addChoices(
+          { name: "NSFW", value: "NSFW" },
+          { name: "Scam Link", value: "SCAM_LINK" },
+          { name: "Wrong Channel", value: "WRONG_CHANNEL" },
+          { name: "Advertising in Chat", value: "AD_IN_CHAT" },
+          { name: "Other", value: "OTHER" }
+        )
+    )
+    .addStringOption(o =>
+      o.setName("message_id").setDescription("Message ID")
+    )
+    .addStringOption(o =>
+      o.setName("thread_id").setDescription("Thread ID")
+    )
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
   async execute(i) {
+    const reason = i.options.getString("reason");
+    const messageId = i.options.getString("message_id");
+    const threadId = i.options.getString("thread_id");
+
     if (!hasModAccess(i.member)) return silentFail(i);
 
-    const u = i.options.getUser("user");
-    const r = i.options.getString("reason");
+    /* ───────── MESSAGE AD-WARN ───────── */
+    if (messageId) {
+      const msg = await i.channel.messages.fetch(messageId).catch(() => null);
+      if (!msg)
+        return i.reply({ content: "❌ Invalid message ID", ephemeral: true });
 
-    const member = await i.guild.members.fetch(u.id);
+      const caseId = addCase({
+        guildId: i.guild.id,
+        type: "AD-WARN",
+        userId: msg.author.id,
+        userTag: msg.author.tag,
+        modId: i.user.id,
+        modTag: i.user.tag,
+        reason: `[${reason}] Message ID: ${messageId}`,
+      });
 
-    await member.timeout(5 * 60000, r);
+      const embed = new EmbedBuilder()
+        .setColor(0xff5500)
+        .setTitle("📢 AD WARN (MESSAGE)")
+        .addFields(
+          { name: "User", value: msg.author.tag, inline: true },
+          { name: "Case", value: `#${caseId}`, inline: true },
+          { name: "Type", value: reason, inline: true },
+          { name: "Message ID", value: messageId },
+          { name: "Content", value: msg.content?.slice(0, 400) || "No content" }
+        );
 
-    const caseId = addCase({
-      guildId: i.guild.id,
-      type: "AD-WARN",
-      userId: u.id,
-      userTag: u.tag,
-      modId: i.user.id,
-      modTag: i.user.tag,
-      reason: r,
+      await logTo(i.guild, "adsChannel", embed);
+      return i.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    /* ───────── THREAD AD-WARN ───────── */
+    if (threadId) {
+      const thread = await i.guild.channels.fetch(threadId).catch(() => null);
+
+      if (!thread || thread.type !== ChannelType.PublicThread)
+        return i.reply({ content: "❌ Invalid thread ID", ephemeral: true });
+
+      const caseId = addCase({
+        guildId: i.guild.id,
+        type: "AD-WARN",
+        userId: thread.ownerId ?? "UNKNOWN",
+        userTag: "THREAD",
+        modId: i.user.id,
+        modTag: i.user.tag,
+        reason: `[${reason}] Thread ID: ${threadId}`,
+      });
+
+      const embed = new EmbedBuilder()
+        .setColor(0xff5500)
+        .setTitle("📢 AD WARN (THREAD)")
+        .addFields(
+          { name: "Thread", value: thread.name, inline: true },
+          { name: "Case", value: `#${caseId}`, inline: true },
+          { name: "Type", value: reason, inline: true }
+        );
+
+      await logTo(i.guild, "adsChannel", embed);
+      return i.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    return i.reply({
+      content: "❌ Provide message_id or thread_id",
+      ephemeral: true,
     });
-
-    const embed = new EmbedBuilder()
-      .setColor(0xff5500)
-      .setTitle("📢 AD VIOLATION WARNING")
-      .setThumbnail(u.displayAvatarURL())
-      .addFields(
-        { name: "User", value: `${u} (${u.tag})`, inline: true },
-        { name: "Moderator", value: `${i.user}`, inline: true },
-        { name: "Case", value: `#${caseId}`, inline: true },
-        { name: "Timeout", value: "5 minutes", inline: true },
-        { name: "Reason", value: r }
-      )
-      .setTimestamp();
-
-    await logTo(i.guild, "adsChannel", embed);
-    await logTo(i.guild, "logsChannel", embed);
-    await i.reply({ embeds: [embed] });
-  }
+  },
 });
 
 /* ───────────────────────
-   KICK
-─────────────────────── */
-moderationCommands.push({
-  data: new SlashCommandBuilder()
-    .setName("kick")
-    .setDescription("Kick a member from the server")
-    .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
-    .addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(false))
-    .setDefaultMemberPermissions(PermissionFlagsBits.KickMembers),
-
-  async execute(i) {
-    if (!hasModAccess(i.member)) return silentFail(i);
-
-    const u = i.options.getUser("user");
-    const r = i.options.getString("reason") ?? "No reason provided";
-
-    const member = await i.guild.members.fetch(u.id).catch(() => null);
-    if (!member) return i.reply({ content: "❌ User not found.", ephemeral: true });
-
-    await member.kick(r);
-
-    const caseId = addCase({
-      guildId: i.guild.id,
-      type: "KICK",
-      userId: u.id,
-      userTag: u.tag,
-      modId: i.user.id,
-      modTag: i.user.tag,
-      reason: r,
-    });
-
-    const embed = new EmbedBuilder()
-      .setColor(0xe67e22)
-      .setTitle("👢 MEMBER KICKED")
-      .setThumbnail(u.displayAvatarURL())
-      .addFields(
-        { name: "User", value: `${u} (${u.tag})`, inline: true },
-        { name: "Moderator", value: `${i.user}`, inline: true },
-        { name: "Case", value: `#${caseId}`, inline: true },
-        { name: "Reason", value: r }
-      )
-      .setTimestamp();
-
-    await logTo(i.guild, "logsChannel", embed);
-    await i.reply({ embeds: [embed] });
-  }
-});
-
-/* ───────────────────────
-   MUTE
+   MUTE / UNMUTE
 ─────────────────────── */
 moderationCommands.push({
   data: new SlashCommandBuilder()
     .setName("mute")
-    .setDescription("Timeout a user for a specified duration")
-    .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
-    .addIntegerOption(o => o.setName("minutes").setDescription("Duration").setMinValue(1).setMaxValue(10080).setRequired(true))
-    .addStringOption(o => o.setName("reason").setDescription("Reason"))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+    .setDescription("Mute user")
+    .addUserOption(o => o.setName("user").setRequired(true))
+    .addIntegerOption(o => o.setName("minutes").setRequired(true))
+    .addStringOption(o => o.setName("reason")),
 
   async execute(i) {
     if (!hasModAccess(i.member)) return silentFail(i);
 
     const u = i.options.getUser("user");
-    const mins = i.options.getInteger("minutes");
-    const r = i.options.getString("reason") ?? "No reason provided";
+    const m = i.options.getInteger("minutes");
+    const r = i.options.getString("reason") ?? "No reason";
 
     const member = await i.guild.members.fetch(u.id).catch(() => null);
-    if (!member) return i.reply({ content: "❌ User not found.", ephemeral: true });
+    if (!member) return i.reply({ content: "User not found", ephemeral: true });
 
-    await member.timeout(mins * 60000, r);
+    await member.timeout(m * 60000, r);
 
     const caseId = addCase({
       guildId: i.guild.id,
@@ -217,265 +235,206 @@ moderationCommands.push({
       userTag: u.tag,
       modId: i.user.id,
       modTag: i.user.tag,
-      reason: `${mins} min — ${r}`,
+      reason: `${m} min - ${r}`,
     });
 
-    const embed = new EmbedBuilder()
-      .setColor(0xe74c3c)
-      .setTitle("🔇 USER MUTED")
-      .addFields(
-        { name: "User", value: `${u} (${u.tag})`, inline: true },
-        { name: "Moderator", value: `${i.user}`, inline: true },
-        { name: "Case", value: `#${caseId}`, inline: true },
-        { name: "Duration", value: `${mins} minute(s)`, inline: true },
-        { name: "Reason", value: r }
-      )
-      .setTimestamp();
-
-    await logTo(i.guild, "logsChannel", embed);
-    await i.reply({ embeds: [embed] });
-  }
+    await i.reply({ content: `Muted ${u.tag} (#${caseId})`, ephemeral: true });
+  },
 });
 
-/* ───────────────────────
-   UNMUTE
-─────────────────────── */
 moderationCommands.push({
   data: new SlashCommandBuilder()
     .setName("unmute")
-    .setDescription("Remove timeout")
-    .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+    .setDescription("Unmute user")
+    .addUserOption(o => o.setName("user").setRequired(true)),
 
   async execute(i) {
     if (!hasModAccess(i.member)) return silentFail(i);
 
     const u = i.options.getUser("user");
-
     const member = await i.guild.members.fetch(u.id).catch(() => null);
-    if (!member) return i.reply({ content: "❌ User not found.", ephemeral: true });
 
     await member.timeout(null);
 
-    addCase({
-      guildId: i.guild.id,
-      type: "UNMUTE",
-      userId: u.id,
-      userTag: u.tag,
-      modId: i.user.id,
-      modTag: i.user.tag,
-      reason: "Timeout removed",
-    });
-
-    const embed = new EmbedBuilder()
-      .setColor(0x2ecc71)
-      .setTitle("🔊 USER UNMUTED")
-      .setThumbnail(u.displayAvatarURL())
-      .addFields(
-        { name: "User", value: `${u} (${u.tag})`, inline: true },
-        { name: "Moderator", value: `${i.user}`, inline: true }
-      )
-      .setTimestamp();
-
-    await logTo(i.guild, "logsChannel", embed);
-    await i.reply({ embeds: [embed] });
-  }
+    await i.reply({ content: `Unmuted ${u.tag}`, ephemeral: true });
+  },
 });
 
 /* ───────────────────────
-   BAN
+   KICK / BAN / UNBAN
 ─────────────────────── */
 moderationCommands.push({
   data: new SlashCommandBuilder()
+    .setName("kick")
+    .setDescription("Kick user")
+    .addUserOption(o => o.setName("user").setRequired(true))
+    .addStringOption(o => o.setName("reason")),
+
+  async execute(i) {
+    if (!hasModAccess(i.member)) return silentFail(i);
+
+    const u = i.options.getUser("user");
+    const r = i.options.getString("reason") ?? "No reason";
+
+    const member = await i.guild.members.fetch(u.id).catch(() => null);
+    await member.kick(r);
+
+    await i.reply({ content: `Kicked ${u.tag}` });
+  },
+});
+
+moderationCommands.push({
+  data: new SlashCommandBuilder()
     .setName("ban")
-    .setDescription("Ban a member from the server")
-    .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
-    .addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(true))
-    .addIntegerOption(o => o.setName("delete-days").setDescription("0-7").setMinValue(0).setMaxValue(7))
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
+    .setDescription("Ban user")
+    .addUserOption(o => o.setName("user").setRequired(true))
+    .addStringOption(o => o.setName("reason").setRequired(true)),
 
   async execute(i) {
     if (!hasModAccess(i.member)) return silentFail(i);
 
     const u = i.options.getUser("user");
     const r = i.options.getString("reason");
-    const days = i.options.getInteger("delete-days") ?? 0;
 
-    await i.guild.members.ban(u.id, { reason: r, deleteMessageDays: days });
+    await i.guild.members.ban(u.id, { reason: r });
 
-    const caseId = addCase({
-      guildId: i.guild.id,
-      type: "BAN",
-      userId: u.id,
-      userTag: u.tag,
-      modId: i.user.id,
-      modTag: i.user.tag,
-      reason: r,
-    });
-
-    const embed = new EmbedBuilder()
-      .setColor(0xff0000)
-      .setTitle("🔨 MEMBER BANNED")
-      .addFields(
-        { name: "User", value: `${u} (${u.tag})`, inline: true },
-        { name: "Moderator", value: `${i.user}`, inline: true },
-        { name: "Case", value: `#${caseId}`, inline: true },
-        { name: "Reason", value: r }
-      )
-      .setTimestamp();
-
-    await logTo(i.guild, "logsChannel", embed);
-    await i.reply({ embeds: [embed] });
-  }
+    await i.reply({ content: `Banned ${u.tag}` });
+  },
 });
-/* ───────────────────────
-   UNBAN
-─────────────────────── */
+
 moderationCommands.push({
   data: new SlashCommandBuilder()
     .setName("unban")
-    .setDescription("Unban a user by their Discord user ID")
-    .addStringOption(o => o.setName("userid").setDescription("The user's Discord ID").setRequired(true))
-    .addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(false))
-    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
+    .setDescription("Unban user")
+    .addStringOption(o => o.setName("userid").setRequired(true)),
 
   async execute(i) {
-    const uid     = i.options.getString("userid");
-    const r       = i.options.getString("reason") ?? "No reason provided";
-    const removed = await i.guild.bans.remove(uid, r).catch(() => null);
-    if (!removed) return i.reply({ content: "❌ Could not unban — user may not be banned or the ID is invalid.", ephemeral: true });
-    addCase({ guildId: i.guild.id, type: "UNBAN", userId: uid, userTag: removed.user?.tag ?? uid, modId: i.user.id, modTag: i.user.tag, reason: r });
-    const embed = new EmbedBuilder()
-      .setColor(0x2ecc71).setTitle("✅ USER UNBANNED")
-      .addFields(
-        { name: "User ID",   value: uid,        inline: true },
-        { name: "Moderator", value: `${i.user}`, inline: true },
-        { name: "Reason",    value: r }
-      ).setTimestamp();
-    await logTo(i.guild, "logsChannel", embed);
-    await i.reply({ embeds: [embed] });
-  }
+    if (!hasModAccess(i.member)) return silentFail(i);
+
+    const id = i.options.getString("userid");
+
+    await i.guild.bans.remove(id).catch(() => null);
+
+    await i.reply({ content: `Unbanned ${id}` });
+  },
 });
 
 /* ───────────────────────
-   JAIL
+   JAIL / UNJAIL
 ─────────────────────── */
 moderationCommands.push({
   data: new SlashCommandBuilder()
     .setName("jail")
-    .setDescription("Apply the jail role to a user")
-    .addUserOption(o => o.setName("user").setDescription("User to jail").setRequired(true))
-    .addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(false))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+    .setDescription("Jail user")
+    .addUserOption(o => o.setName("user").setRequired(true))
+    .addStringOption(o => o.setName("reason")),
 
   async execute(i) {
-    const u   = i.options.getUser("user");
-    const r   = i.options.getString("reason") ?? "No reason provided";
+    if (!hasModAccess(i.member)) return silentFail(i);
+
     const cfg = loadJSON(setupFile);
-    if (!cfg.jailRole) return i.reply({ content: "⚠️ Jail role not configured. Run `/setup roles jail` first.", ephemeral: true });
+    const u = i.options.getUser("user");
+    const r = i.options.getString("reason") ?? "No reason";
+
     const member = await i.guild.members.fetch(u.id).catch(() => null);
-    if (!member) return i.reply({ content: "❌ User not found.", ephemeral: true });
-    await member.roles.add(cfg.jailRole, r);
+    if (!cfg.jailRole) return i.reply({ content: "Jail role not set", ephemeral: true });
+
+    await member.roles.add(cfg.jailRole);
+
     const jailData = loadJSON(jailFile);
-    jailData[u.id] = { reason: r, jailedBy: i.user.id, timestamp: Date.now() };
+    jailData[u.id] = { reason: r };
     saveJSON(jailFile, jailData);
-    const caseId = addCase({ guildId: i.guild.id, type: "JAIL", userId: u.id, userTag: u.tag, modId: i.user.id, modTag: i.user.tag, reason: r });
-    const embed = new EmbedBuilder()
-      .setColor(0x95a5a6).setTitle("🔒 USER JAILED")
-      .setThumbnail(u.displayAvatarURL())
-      .addFields(
-        { name: "User",      value: `${u} (${u.tag})`, inline: true },
-        { name: "Moderator", value: `${i.user}`,        inline: true },
-        { name: "Case",      value: `#${caseId}`,       inline: true },
-        { name: "Reason",    value: r }
-      ).setTimestamp();
-    await logTo(i.guild, "logsChannel", embed);
-    await i.reply({ embeds: [embed] });
-  }
+
+    await i.reply({ content: `Jailed ${u.tag}` });
+  },
 });
 
-/* ───────────────────────
-   UNJAIL
-─────────────────────── */
 moderationCommands.push({
   data: new SlashCommandBuilder()
     .setName("unjail")
-    .setDescription("Remove the jail role from a user")
-    .addUserOption(o => o.setName("user").setDescription("User to unjail").setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+    .setDescription("Unjail user")
+    .addUserOption(o => o.setName("user").setRequired(true)),
 
   async execute(i) {
-    const u   = i.options.getUser("user");
+    if (!hasModAccess(i.member)) return silentFail(i);
+
     const cfg = loadJSON(setupFile);
-    if (!cfg.jailRole) return i.reply({ content: "⚠️ Jail role not configured. Run `/setup roles jail` first.", ephemeral: true });
+    const u = i.options.getUser("user");
+
     const member = await i.guild.members.fetch(u.id).catch(() => null);
-    if (!member) return i.reply({ content: "❌ User not found.", ephemeral: true });
+    if (!cfg.jailRole) return i.reply({ content: "Jail role not set", ephemeral: true });
+
     await member.roles.remove(cfg.jailRole);
+
     const jailData = loadJSON(jailFile);
     delete jailData[u.id];
     saveJSON(jailFile, jailData);
-    addCase({ guildId: i.guild.id, type: "UNJAIL", userId: u.id, userTag: u.tag, modId: i.user.id, modTag: i.user.tag, reason: "Released from jail" });
-    const embed = new EmbedBuilder()
-      .setColor(0x2ecc71).setTitle("🔓 USER UNJAILED")
-      .setThumbnail(u.displayAvatarURL())
-      .addFields(
-        { name: "User",      value: `${u} (${u.tag})`, inline: true },
-        { name: "Moderator", value: `${i.user}`,        inline: true }
-      ).setTimestamp();
-    await logTo(i.guild, "logsChannel", embed);
-    await i.reply({ embeds: [embed] });
-  }
+
+    await i.reply({ content: `Unjailed ${u.tag}` });
+  },
 });
 
 /* ───────────────────────
-   WARNINGS CHECK
+   WARN SYSTEM COMMANDS
 ─────────────────────── */
 moderationCommands.push({
   data: new SlashCommandBuilder()
     .setName("warnings")
-    .setDescription("Check how many warnings a user has")
-    .addUserOption(o => o.setName("user").setDescription("User to check").setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+    .setDescription("Check warnings")
+    .addUserOption(o => o.setName("user").setRequired(true)),
 
   async execute(i) {
-    const u     = i.options.getUser("user");
+    const u = i.options.getUser("user");
     const count = loadJSON(warnFile)[u.id] ?? 0;
-    const embed = new EmbedBuilder()
-      .setColor(0x9b59b6).setTitle("📋 WARNING RECORD")
-      .setThumbnail(u.displayAvatarURL())
-      .addFields(
-        { name: "User",           value: `${u} (${u.tag})`, inline: true },
-        { name: "Total Warnings", value: `${count}`,         inline: true }
-      ).setTimestamp();
-    await i.reply({ embeds: [embed], ephemeral: true });
-  }
+
+    await i.reply({
+      content: `${u.tag} has ${count} warnings`,
+      ephemeral: true,
+    });
+  },
 });
 
-/* ───────────────────────
-   CLEAR WARNINGS
-─────────────────────── */
 moderationCommands.push({
   data: new SlashCommandBuilder()
     .setName("clearwarnings")
-    .setDescription("Clear all warnings for a user")
-    .addUserOption(o => o.setName("user").setDescription("User to clear").setRequired(true))
-    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+    .setDescription("Clear warnings")
+    .addUserOption(o => o.setName("user").setRequired(true)),
 
   async execute(i) {
-    const u    = i.options.getUser("user");
+    const u = i.options.getUser("user");
+
     const data = loadJSON(warnFile);
-    const prev = data[u.id] ?? 0;
     delete data[u.id];
     saveJSON(warnFile, data);
+
+    await i.reply({ content: `Cleared warnings for ${u.tag}` });
+  },
+});
+
+/* ───────────────────────
+   HISTORY / CASE VIEW
+─────────────────────── */
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("case")
+    .setDescription("View user cases")
+    .addUserOption(o => o.setName("user").setRequired(true)),
+
+  async execute(i) {
+    const u = i.options.getUser("user");
+    const cases = getCasesForUser(i.guild.id, u.id);
+
+    if (!cases.length)
+      return i.reply({ content: "No cases found", ephemeral: true });
+
     const embed = new EmbedBuilder()
-      .setColor(0x1abc9c).setTitle("🧹 WARNINGS CLEARED")
-      .setThumbnail(u.displayAvatarURL())
-      .addFields(
-        { name: "User",             value: `${u} (${u.tag})`, inline: true },
-        { name: "Warnings Removed", value: `${prev}`,          inline: true },
-        { name: "Cleared by",       value: `${i.user}`,         inline: true }
-      ).setTimestamp();
-    await logTo(i.guild, "logsChannel", embed);
-    await i.reply({ embeds: [embed] });
-  }
+      .setTitle(`Cases for ${u.tag}`)
+      .setDescription(
+        cases.slice(-10).map(c =>
+          `#${c.caseId} ${c.type} - ${c.reason}`
+        ).join("\n")
+      );
+
+    await i.reply({ embeds: [embed], ephemeral: true });
+  },
 });
