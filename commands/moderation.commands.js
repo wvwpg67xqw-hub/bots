@@ -1,8 +1,10 @@
 import fs from "fs";
-import { SlashCommandBuilder, PermissionFlagsBits } from "discord.js";
+import { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } from "discord.js";
 
 const warnFile = "./warnings.json";
 const jailFile = "./jaildata.json";
+
+/* ---------- HELPERS ---------- */
 
 function load(file) {
   if (!fs.existsSync(file)) return {};
@@ -12,6 +14,8 @@ function load(file) {
 function save(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
+
+/* ---------- WARN SYSTEM ---------- */
 
 function addWarn(id) {
   const data = load(warnFile);
@@ -24,6 +28,8 @@ function calcTime(count) {
   return 5 + (count * 5);
 }
 
+/* ---------- WARN ---------- */
+
 const warn = {
   data: new SlashCommandBuilder()
     .setName("warn")
@@ -35,7 +41,6 @@ const warn = {
   async execute(i) {
     const u = i.options.getUser("user");
     const r = i.options.getString("reason");
-
     const m = await i.guild.members.fetch(u.id);
 
     const count = addWarn(u.id);
@@ -43,14 +48,26 @@ const warn = {
 
     await m.timeout(time * 60000, r);
 
-    i.reply(`⚠️ ${u.tag} warned | ${time} min timeout`);
+    const embed = new EmbedBuilder()
+      .setColor(0xffcc00)
+      .setTitle("⚠️ USER WARNED")
+      .addFields(
+        { name: "User", value: u.tag },
+        { name: "Reason", value: r },
+        { name: "Timeout", value: `${time} minutes` }
+      )
+      .setFooter({ text: "DM <@1501608341661683752> if incorrect" });
+
+    await i.channel.send({ embeds: [embed] });
+    i.reply({ content: "User warned", ephemeral: true });
   }
 };
+
+/* ---------- MUTE ---------- */
 
 const mute = {
   data: new SlashCommandBuilder()
     .setName("mute")
-    .setDescription("Timeout user")
     .addUserOption(o => o.setName("user").setRequired(true))
     .addIntegerOption(o => o.setName("minutes").setRequired(true))
     .addStringOption(o => o.setName("reason").setRequired(true)),
@@ -59,14 +76,13 @@ const mute = {
     const u = i.options.getUser("user");
     const m = await i.guild.members.fetch(u.id);
 
-    const mins = i.options.getInteger("minutes");
-    const r = i.options.getString("reason");
-
-    await m.timeout(mins * 60000, r);
+    await m.timeout(i.options.getInteger("minutes") * 60000, i.options.getString("reason"));
 
     i.reply(`🔇 Muted ${u.tag}`);
   }
 };
+
+/* ---------- UNMUTE ---------- */
 
 const unmute = {
   data: new SlashCommandBuilder()
@@ -82,6 +98,8 @@ const unmute = {
     i.reply(`🔊 Unmuted ${u.tag}`);
   }
 };
+
+/* ---------- JAIL ---------- */
 
 const jail = {
   data: new SlashCommandBuilder()
@@ -101,12 +119,14 @@ const jail = {
 
     await m.roles.set([]);
 
-    const jailRole = i.guild.roles.cache.find(r => r.name === "Jail");
-    if (jailRole) await m.roles.add(jailRole);
+    const jr = i.guild.roles.cache.find(r => r.name === "Jail");
+    if (jr) await m.roles.add(jr);
 
     i.reply(`🚨 Jailed ${u.tag}`);
   }
 };
+
+/* ---------- UNJAIL ---------- */
 
 const unjail = {
   data: new SlashCommandBuilder()
