@@ -1,5 +1,5 @@
 {
-  "adChannels": [],
-  "roles": {},
-  "logChannel": null
+  "modLog": null,
+  "adLog": null,
+  "networkLog": null
 }
