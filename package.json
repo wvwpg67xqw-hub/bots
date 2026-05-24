@@ -1,0 +1,29 @@
+{
+  "name": "ad-moderation-bot",
+  "version": "1.0.0",
+  "description": "A Discord moderation and advertisement control bot with warn, mute, jail, and ad enforcement systems",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.0",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": "18.x"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "moderation",
+    "discordjs",
+    "adbot",
+    "jail-system",
+    "warn-system"
+  ],
+  "author": "your-name",
+  "license": "MIT"
+}
