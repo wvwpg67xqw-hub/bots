@@ -1,0 +1,35 @@
+v22.22.3
+:/home/container$ if [ ! -d .git ]; then git clone https://github.com/wvwpg67xqw-hub/bots .; fi; if [[ "${AUTO_UPDATE}" == "1" ]]; then git pull; fi; if [ -f /home/container/package.json ]; then npm install; fi; if [[ "${MAIN_FILE}" == "*.js" ]]; then node index.js; else node index.js; fi # Added by FeatherPanel (Server Startup)
+fatal: destination path '.' already exists and is not an empty directory.
+\[1G[0K|[1G[0K[1mnpm[22m [33mwarn[39m [94mEBADENGINE[39m Unsupported engine {
+[1mnpm[22m [33mwarn[39m [94mEBADENGINE[39m   package: [32m'ad-moderation-bot@1.0.0'[39m,
+[1mnpm[22m [33mwarn[39m [94mEBADENGINE[39m   required: { node: [32m'18.x'[39m },
+[1mnpm[22m [33mwarn[39m [94mEBADENGINE[39m   current: { node: [32m'v22.22.3'[39m, npm: [32m'11.14.1'[39m }
+[1mnpm[22m [33mwarn[39m [94mEBADENGINE[39m }
+/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K\[1G[0K|[1G[0K/[1G[0K-[1G[0K
+added 27 packages, and audited 28 packages in 20s
+-[1G[0K
+-[1G[0K8 packages are looking for funding
+-[1G[0K  run `npm fund` for details
+-[1G[0K
+found [32m[1m0[22m[39m vulnerabilities
+-[1G[0K[1mnpm[22m [96mnotice[39m
+[1mnpm[22m [96mnotice[39m New [33mminor[39m version of npm available! [33m11.14.1[39m -> [34m11.15.0[39m
+[1mnpm[22m [96mnotice[39m Changelog: [34mhttps://github.com/npm/cli/releases/tag/v11.15.0[39m
+[1mnpm[22m [96mnotice[39m To update run: [4mnpm install -g npm@11.15.0[24m
+[1mnpm[22m [96mnotice[39m
+-[1G[0Kfile:///home/container/commands/moderation.js:332
+export { moderationCommands };
+         ^^^^^^^^^^^^^^^^^^
+
+SyntaxError: Duplicate export of 'moderationCommands'
+[90m    at compileSourceTextModule (node:internal/modules/esm/utils:346:16)[39m
+[90m    at ModuleLoader.moduleStrategy (node:internal/modules/esm/translators:110:18)[39m
+[90m    at #translate (node:internal/modules/esm/loader:559:20)[39m
+[90m    at afterLoad (node:internal/modules/esm/loader:612:29)[39m
+[90m    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:617:12)[39m
+[90m    at #createModuleJob (node:internal/modules/esm/loader:640:36)[39m
+[90m    at #getJobFromResolveResult (node:internal/modules/esm/loader:353:34)[39m
+[90m    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:321:41)[39m
+
+Node.js v22.22.3

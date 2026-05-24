@@ -328,5 +328,154 @@ moderationCommands.push({
     await i.reply({ embeds: [embed] });
   }
 });
+/* ───────────────────────
+   UNBAN
+─────────────────────── */
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("unban")
+    .setDescription("Unban a user by their Discord user ID")
+    .addStringOption(o => o.setName("userid").setDescription("The user's Discord ID").setRequired(true))
+    .addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(false))
+    .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
 
-export { moderationCommands };
+  async execute(i) {
+    const uid     = i.options.getString("userid");
+    const r       = i.options.getString("reason") ?? "No reason provided";
+    const removed = await i.guild.bans.remove(uid, r).catch(() => null);
+    if (!removed) return i.reply({ content: "❌ Could not unban — user may not be banned or the ID is invalid.", ephemeral: true });
+    addCase({ guildId: i.guild.id, type: "UNBAN", userId: uid, userTag: removed.user?.tag ?? uid, modId: i.user.id, modTag: i.user.tag, reason: r });
+    const embed = new EmbedBuilder()
+      .setColor(0x2ecc71).setTitle("✅ USER UNBANNED")
+      .addFields(
+        { name: "User ID",   value: uid,        inline: true },
+        { name: "Moderator", value: `${i.user}`, inline: true },
+        { name: "Reason",    value: r }
+      ).setTimestamp();
+    await logTo(i.guild, "logsChannel", embed);
+    await i.reply({ embeds: [embed] });
+  }
+});
+
+/* ───────────────────────
+   JAIL
+─────────────────────── */
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("jail")
+    .setDescription("Apply the jail role to a user")
+    .addUserOption(o => o.setName("user").setDescription("User to jail").setRequired(true))
+    .addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(false))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+
+  async execute(i) {
+    const u   = i.options.getUser("user");
+    const r   = i.options.getString("reason") ?? "No reason provided";
+    const cfg = loadJSON(setupFile);
+    if (!cfg.jailRole) return i.reply({ content: "⚠️ Jail role not configured. Run `/setup roles jail` first.", ephemeral: true });
+    const member = await i.guild.members.fetch(u.id).catch(() => null);
+    if (!member) return i.reply({ content: "❌ User not found.", ephemeral: true });
+    await member.roles.add(cfg.jailRole, r);
+    const jailData = loadJSON(jailFile);
+    jailData[u.id] = { reason: r, jailedBy: i.user.id, timestamp: Date.now() };
+    saveJSON(jailFile, jailData);
+    const caseId = addCase({ guildId: i.guild.id, type: "JAIL", userId: u.id, userTag: u.tag, modId: i.user.id, modTag: i.user.tag, reason: r });
+    const embed = new EmbedBuilder()
+      .setColor(0x95a5a6).setTitle("🔒 USER JAILED")
+      .setThumbnail(u.displayAvatarURL())
+      .addFields(
+        { name: "User",      value: `${u} (${u.tag})`, inline: true },
+        { name: "Moderator", value: `${i.user}`,        inline: true },
+        { name: "Case",      value: `#${caseId}`,       inline: true },
+        { name: "Reason",    value: r }
+      ).setTimestamp();
+    await logTo(i.guild, "logsChannel", embed);
+    await i.reply({ embeds: [embed] });
+  }
+});
+
+/* ───────────────────────
+   UNJAIL
+─────────────────────── */
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("unjail")
+    .setDescription("Remove the jail role from a user")
+    .addUserOption(o => o.setName("user").setDescription("User to unjail").setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+
+  async execute(i) {
+    const u   = i.options.getUser("user");
+    const cfg = loadJSON(setupFile);
+    if (!cfg.jailRole) return i.reply({ content: "⚠️ Jail role not configured. Run `/setup roles jail` first.", ephemeral: true });
+    const member = await i.guild.members.fetch(u.id).catch(() => null);
+    if (!member) return i.reply({ content: "❌ User not found.", ephemeral: true });
+    await member.roles.remove(cfg.jailRole);
+    const jailData = loadJSON(jailFile);
+    delete jailData[u.id];
+    saveJSON(jailFile, jailData);
+    addCase({ guildId: i.guild.id, type: "UNJAIL", userId: u.id, userTag: u.tag, modId: i.user.id, modTag: i.user.tag, reason: "Released from jail" });
+    const embed = new EmbedBuilder()
+      .setColor(0x2ecc71).setTitle("🔓 USER UNJAILED")
+      .setThumbnail(u.displayAvatarURL())
+      .addFields(
+        { name: "User",      value: `${u} (${u.tag})`, inline: true },
+        { name: "Moderator", value: `${i.user}`,        inline: true }
+      ).setTimestamp();
+    await logTo(i.guild, "logsChannel", embed);
+    await i.reply({ embeds: [embed] });
+  }
+});
+
+/* ───────────────────────
+   WARNINGS CHECK
+─────────────────────── */
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("warnings")
+    .setDescription("Check how many warnings a user has")
+    .addUserOption(o => o.setName("user").setDescription("User to check").setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+
+  async execute(i) {
+    const u     = i.options.getUser("user");
+    const count = loadJSON(warnFile)[u.id] ?? 0;
+    const embed = new EmbedBuilder()
+      .setColor(0x9b59b6).setTitle("📋 WARNING RECORD")
+      .setThumbnail(u.displayAvatarURL())
+      .addFields(
+        { name: "User",           value: `${u} (${u.tag})`, inline: true },
+        { name: "Total Warnings", value: `${count}`,         inline: true }
+      ).setTimestamp();
+    await i.reply({ embeds: [embed], ephemeral: true });
+  }
+});
+
+/* ───────────────────────
+   CLEAR WARNINGS
+─────────────────────── */
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("clearwarnings")
+    .setDescription("Clear all warnings for a user")
+    .addUserOption(o => o.setName("user").setDescription("User to clear").setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
+
+  async execute(i) {
+    const u    = i.options.getUser("user");
+    const data = loadJSON(warnFile);
+    const prev = data[u.id] ?? 0;
+    delete data[u.id];
+    saveJSON(warnFile, data);
+    const embed = new EmbedBuilder()
+      .setColor(0x1abc9c).setTitle("🧹 WARNINGS CLEARED")
+      .setThumbnail(u.displayAvatarURL())
+      .addFields(
+        { name: "User",             value: `${u} (${u.tag})`, inline: true },
+        { name: "Warnings Removed", value: `${prev}`,          inline: true },
+        { name: "Cleared by",       value: `${i.user}`,         inline: true }
+      ).setTimestamp();
+    await logTo(i.guild, "logsChannel", embed);
+    await i.reply({ embeds: [embed] });
+  }
+});
