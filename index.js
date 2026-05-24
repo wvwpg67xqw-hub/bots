@@ -1,60 +1,32 @@
 import "dotenv/config";
 import { REST, Routes } from "discord.js";
-
-import moderation from "./commands/moderation.commands.js";
-import ad from "./commands/ad.commands.js";
-import network from "./commands/network.commands.js";
-import setup from "./commands/setup.commands.js";
-
-const groups = {
-  moderation,
-  ad,
-  network,
-  setup
-};
+import { commands } from "./commands.js";
 
 const allCommands = [];
 
-console.log("🔍 DEBUG MODE: Starting command scan...\n");
+console.log("🔍 Loading single command file...\n");
 
-for (const [groupName, group] of Object.entries(groups)) {
-  console.log(`📁 Checking group: ${groupName}`);
-
-  if (!Array.isArray(group)) {
-    console.log(`❌ GROUP IS NOT AN ARRAY: ${groupName}`);
+for (const cmd of commands) {
+  if (!cmd?.data) {
+    console.log("❌ Invalid command object:", cmd);
     continue;
   }
 
-  for (const cmd of group) {
-    if (!cmd || !cmd.data) {
-      console.log(`❌ INVALID COMMAND OBJECT in ${groupName}:`, cmd);
-      continue;
-    }
+  const name = cmd.data.name ?? "UNKNOWN";
+  console.log(`➡️ Loading command: ${name}`);
 
-    const name = cmd.data?.name ?? "UNKNOWN";
-    console.log(`➡️ Loading command: ${groupName}/${name}`);
-
-    let json;
-
-    try {
-      json = cmd.data.toJSON();
-    } catch (err) {
-      console.log("\n💥 CRASH DETECTED!");
-      console.log("📁 GROUP:", groupName);
-      console.log("⚙️ COMMAND:", name);
-      console.log("🧨 ERROR:");
-      console.error(err);
-
-      // IMPORTANT: don't hide the real issue
-      process.exit(1);
-    }
-
-    allCommands.push(json);
+  try {
+    allCommands.push(cmd.data.toJSON());
+  } catch (err) {
+    console.log("\n💥 CRASH DETECTED!");
+    console.log("⚙️ COMMAND:", name);
+    console.error(err);
+    process.exit(1);
   }
 }
 
-console.log("\n✅ All commands passed validation!");
-console.log(`🚀 Sending ${allCommands.length} commands to Discord...\n`);
+console.log(`\n✅ Loaded ${allCommands.length} commands`);
+console.log("🚀 Registering slash commands...\n");
 
 const rest = new REST({ version: "10" }).setToken(process.env.TOKEN);
 
