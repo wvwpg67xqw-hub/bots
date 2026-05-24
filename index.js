@@ -33,52 +33,66 @@ client.raidMode = new Map();
 client.snipeCache = new Map();
 
 // =========================
-// DEBUG MODE FLAG
+// DEBUG MODE
 // =========================
 const DEBUG = true;
 
-function debugLog(...args) {
-  if (DEBUG) console.log("🐞 [DEBUG]", ...args);
+function log(...args) {
+  if (DEBUG) console.log("🐞", ...args);
 }
 
 // =========================
-// LOAD COMMANDS (SAFE MODE)
+// SAFE SLASH VALIDATOR
+// =========================
+function safeToJSON(cmd) {
+  try {
+    return cmd.data.toJSON();
+  } catch (err) {
+    console.log("\n❌ SLASH COMMAND BUILD FAILED");
+    console.log("➡️ Command:", cmd?.data?.name ?? "UNKNOWN");
+    console.log("📁 File:", cmd?.filePath ?? "UNKNOWN");
+    console.error(err);
+    console.log("────────────────────────────\n");
+    throw err;
+  }
+}
+
+// =========================
+// LOAD COMMANDS (DEBUG MODE)
 // =========================
 for (const cmd of commands ?? []) {
   try {
-    if (!cmd?.data) {
-      console.log("⚠️ Skipping command: missing data");
-      continue;
+    console.log("🧪 Testing:", cmd?.data?.name ?? "UNKNOWN");
+
+    if (!cmd?.data || !cmd?.execute) {
+      throw new Error("Missing data or execute");
     }
 
-    if (!cmd?.execute) {
-      console.log(`⚠️ Skipping command ${cmd.data?.name}: missing execute`);
-      continue;
-    }
-
-    // 🔥 CRASH FIX: validate builder before register
-    const json = cmd.data.toJSON();
+    const json = safeToJSON(cmd);
 
     if (!json?.name || typeof json.name !== "string") {
-      throw new Error(`Invalid command name in: ${cmd.data?.name}`);
+      throw new Error("Invalid command name");
     }
 
     if (!json?.description || typeof json.description !== "string") {
-      throw new Error(`Missing description in: ${json.name}`);
+      throw new Error(`Missing description in ${json.name}`);
     }
 
     client.commands.set(json.name, cmd);
-    debugLog(`Loaded command: ${json.name}`);
+
+    console.log("✅ Loaded:", json.name);
   } catch (err) {
-    console.error("❌ COMMAND LOAD FAILED:", err);
-    console.error("➡️ Problem command:", cmd?.data?.name ?? "UNKNOWN");
+    console.log("❌ FAILED COMMAND LOAD");
+    console.log("➡️ Name:", cmd?.data?.name);
+    console.log("📁 File:", cmd?.filePath ?? "unknown");
+    console.error(err);
   }
 }
 
 console.log(`📦 Loaded ${client.commands.size} commands`);
 
 // =========================
-// READY
+// READY (REGISTER COMMANDS)
 // =========================
 client.once("ready", async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
@@ -89,15 +103,10 @@ client.once("ready", async () => {
 
   for (const cmd of client.commands.values()) {
     try {
-      const json = cmd.data.toJSON();
-
-      if (!json?.name || !json?.description) {
-        throw new Error(`Invalid slash command: ${json?.name}`);
-      }
-
+      const json = safeToJSON(cmd);
       body.push(json);
     } catch (err) {
-      console.error("❌ SLASH BUILD ERROR:", err);
+      console.log("❌ Skipping broken command:", cmd?.data?.name);
     }
   }
 
@@ -110,7 +119,7 @@ client.once("ready", async () => {
 
       console.log(`✅ Registered ${body.length} commands in ${guild.name}`);
     } catch (err) {
-      console.error(`❌ Failed registering in ${guild.name}:`, err);
+      console.error(`❌ Failed registering in ${guild.name}`, err);
     }
   }
 });
@@ -120,22 +129,22 @@ client.once("ready", async () => {
 // =========================
 client.on("interactionCreate", async (interaction) => {
   try {
-    if (interaction.isChatInputCommand()) {
-      const cmd = client.commands.get(interaction.commandName);
+    if (!interaction.isChatInputCommand()) return;
 
-      if (!cmd) {
-        console.log("❌ Unknown command:", interaction.commandName);
-        return;
-      }
+    const cmd = client.commands.get(interaction.commandName);
 
-      await cmd.execute(interaction);
+    if (!cmd) {
+      console.log("❌ Unknown command:", interaction.commandName);
+      return;
     }
-  } catch (err) {
-    console.error("❌ INTERACTION CRASH:", err);
 
-    if (!interaction.replied && !interaction.deferred) {
+    await cmd.execute(interaction);
+  } catch (err) {
+    console.error("❌ INTERACTION ERROR:", err);
+
+    if (!interaction.replied) {
       await interaction.reply({
-        content: "❌ Command crashed (check console)",
+        content: "❌ Command crashed. Check console logs.",
         ephemeral: true,
       });
     }
