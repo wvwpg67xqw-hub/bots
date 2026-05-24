@@ -53,16 +53,8 @@ moderationCommands.push({
   data: new SlashCommandBuilder()
     .setName("warn")
     .setDescription("Warn a user")
-    .addUserOption(o =>
-      o.setName("user")
-        .setDescription("User to warn")
-        .setRequired(true)
-    )
-    .addStringOption(o =>
-      o.setName("reason")
-        .setDescription("Reason for warning")
-        .setRequired(true)
-    )
+    .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
+    .addStringOption(o => o.setName("reason").setDescription("Reason").setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
   async execute(i) {
@@ -111,14 +103,15 @@ moderationCommands.push({
 });
 
 /* ───────────────────────
-   AD-WARN (SAFE)
+   AD-WARN (MESSAGE / THREAD + PRESETS)
 ─────────────────────── */
 moderationCommands.push({
   data: new SlashCommandBuilder()
     .setName("ad-warn")
     .setDescription("Ad moderation via message or thread")
     .addStringOption(o =>
-      o.setName("reason")
+      o
+        .setName("reason")
         .setDescription("Violation type")
         .setRequired(true)
         .addChoices(
@@ -130,12 +123,10 @@ moderationCommands.push({
         )
     )
     .addStringOption(o =>
-      o.setName("message_id")
-        .setDescription("Message ID to target")
+      o.setName("message_id").setDescription("Message ID")
     )
     .addStringOption(o =>
-      o.setName("thread_id")
-        .setDescription("Thread ID to target")
+      o.setName("thread_id").setDescription("Thread ID")
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
@@ -146,6 +137,7 @@ moderationCommands.push({
 
     if (!hasModAccess(i.member)) return silentFail(i);
 
+    /* ───────── MESSAGE AD-WARN ───────── */
     if (messageId) {
       const msg = await i.channel.messages.fetch(messageId).catch(() => null);
       if (!msg)
@@ -161,12 +153,22 @@ moderationCommands.push({
         reason: `[${reason}] Message ID: ${messageId}`,
       });
 
-      return i.reply({
-        content: `Ad warned message (#${caseId})`,
-        ephemeral: true,
-      });
+      const embed = new EmbedBuilder()
+        .setColor(0xff5500)
+        .setTitle("📢 AD WARN (MESSAGE)")
+        .addFields(
+          { name: "User", value: msg.author.tag, inline: true },
+          { name: "Case", value: `#${caseId}`, inline: true },
+          { name: "Type", value: reason, inline: true },
+          { name: "Message ID", value: messageId },
+          { name: "Content", value: msg.content?.slice(0, 400) || "No content" }
+        );
+
+      await logTo(i.guild, "adsChannel", embed);
+      return i.reply({ embeds: [embed], ephemeral: true });
     }
 
+    /* ───────── THREAD AD-WARN ───────── */
     if (threadId) {
       const thread = await i.guild.channels.fetch(threadId).catch(() => null);
 
@@ -183,10 +185,17 @@ moderationCommands.push({
         reason: `[${reason}] Thread ID: ${threadId}`,
       });
 
-      return i.reply({
-        content: `Ad warned thread (#${caseId})`,
-        ephemeral: true,
-      });
+      const embed = new EmbedBuilder()
+        .setColor(0xff5500)
+        .setTitle("📢 AD WARN (THREAD)")
+        .addFields(
+          { name: "Thread", value: thread.name, inline: true },
+          { name: "Case", value: `#${caseId}`, inline: true },
+          { name: "Type", value: reason, inline: true }
+        );
+
+      await logTo(i.guild, "adsChannel", embed);
+      return i.reply({ embeds: [embed], ephemeral: true });
     }
 
     return i.reply({
@@ -197,28 +206,16 @@ moderationCommands.push({
 });
 
 /* ───────────────────────
-   MUTE / UNMUTE (FIXED)
+   MUTE / UNMUTE
 ─────────────────────── */
 moderationCommands.push({
   data: new SlashCommandBuilder()
     .setName("mute")
     .setDescription("Mute user")
-    .addUserOption(o =>
-      o.setName("user")
-        .setDescription("User to mute")
-        .setRequired(true)
-    )
-    .addIntegerOption(o =>
-      o.setName("minutes")
-        .setDescription("Duration in minutes")
-        .setRequired(true)
-    )
-    .addStringOption(o =>
-      o.setName("reason")
-        .setDescription("Reason")
-    ),
+    .addUserOption(o => o.setName("user").setRequired(true))
+    .addIntegerOption(o => o.setName("minutes").setRequired(true))
+    .addStringOption(o => o.setName("reason")),
 
-  async execute(i) {
     if (!hasModAccess(i.member)) return silentFail(i);
 
     const u = i.options.getUser("user");
@@ -244,18 +241,11 @@ moderationCommands.push({
   },
 });
 
-/* ───────────────────────
-   UNMUTE
-─────────────────────── */
 moderationCommands.push({
   data: new SlashCommandBuilder()
     .setName("unmute")
     .setDescription("Unmute user")
-    .addUserOption(o =>
-      o.setName("user")
-        .setDescription("User to unmute")
-        .setRequired(true)
-    ),
+    .addUserOption(o => o.setName("user").setRequired(true)),
 
   async execute(i) {
     if (!hasModAccess(i.member)) return silentFail(i);
@@ -263,10 +253,187 @@ moderationCommands.push({
     const u = i.options.getUser("user");
     const member = await i.guild.members.fetch(u.id).catch(() => null);
 
-    if (!member) return i.reply({ content: "User not found", ephemeral: true });
-
     await member.timeout(null);
 
     await i.reply({ content: `Unmuted ${u.tag}`, ephemeral: true });
+  },
+});
+
+/* ───────────────────────
+   KICK / BAN / UNBAN
+─────────────────────── */
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("kick")
+    .setDescription("Kick user")
+    .addUserOption(o => o.setName("user").setRequired(true))
+    .addStringOption(o => o.setName("reason")),
+
+  async execute(i) {
+    if (!hasModAccess(i.member)) return silentFail(i);
+
+    const u = i.options.getUser("user");
+    const r = i.options.getString("reason") ?? "No reason";
+
+    const member = await i.guild.members.fetch(u.id).catch(() => null);
+    await member.kick(r);
+
+    await i.reply({ content: `Kicked ${u.tag}` });
+  },
+});
+
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("ban")
+    .setDescription("Ban user")
+    .addUserOption(o => o.setName("user").setRequired(true))
+    .addStringOption(o => o.setName("reason").setRequired(true)),
+
+  async execute(i) {
+    if (!hasModAccess(i.member)) return silentFail(i);
+
+    const u = i.options.getUser("user");
+    const r = i.options.getString("reason");
+
+    await i.guild.members.ban(u.id, { reason: r });
+
+    await i.reply({ content: `Banned ${u.tag}` });
+  },
+});
+
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("unban")
+    .setDescription("Unban user")
+    .addStringOption(o => o.setName("userid").setRequired(true)),
+
+  async execute(i) {
+    if (!hasModAccess(i.member)) return silentFail(i);
+
+    const id = i.options.getString("userid");
+
+    await i.guild.bans.remove(id).catch(() => null);
+
+    await i.reply({ content: `Unbanned ${id}` });
+  },
+});
+
+/* ───────────────────────
+   JAIL / UNJAIL
+─────────────────────── */
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("jail")
+    .setDescription("Jail user")
+    .addUserOption(o => o.setName("user").setRequired(true))
+    .addStringOption(o => o.setName("reason")),
+
+  async execute(i) {
+    if (!hasModAccess(i.member)) return silentFail(i);
+
+    const cfg = loadJSON(setupFile);
+    const u = i.options.getUser("user");
+    const r = i.options.getString("reason") ?? "No reason";
+
+    const member = await i.guild.members.fetch(u.id).catch(() => null);
+    if (!cfg.jailRole) return i.reply({ content: "Jail role not set", ephemeral: true });
+
+    await member.roles.add(cfg.jailRole);
+
+    const jailData = loadJSON(jailFile);
+    jailData[u.id] = { reason: r };
+    saveJSON(jailFile, jailData);
+
+    await i.reply({ content: `Jailed ${u.tag}` });
+  },
+});
+
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("unjail")
+    .setDescription("Unjail user")
+    .addUserOption(o => o.setName("user").setRequired(true)),
+
+  async execute(i) {
+    if (!hasModAccess(i.member)) return silentFail(i);
+
+    const cfg = loadJSON(setupFile);
+    const u = i.options.getUser("user");
+
+    const member = await i.guild.members.fetch(u.id).catch(() => null);
+    if (!cfg.jailRole) return i.reply({ content: "Jail role not set", ephemeral: true });
+
+    await member.roles.remove(cfg.jailRole);
+
+    const jailData = loadJSON(jailFile);
+    delete jailData[u.id];
+    saveJSON(jailFile, jailData);
+
+    await i.reply({ content: `Unjailed ${u.tag}` });
+  },
+});
+
+/* ───────────────────────
+   WARN SYSTEM COMMANDS
+─────────────────────── */
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("warnings")
+    .setDescription("Check warnings")
+    .addUserOption(o => o.setName("user").setRequired(true)),
+
+  async execute(i) {
+    const u = i.options.getUser("user");
+    const count = loadJSON(warnFile)[u.id] ?? 0;
+
+    await i.reply({
+      content: `${u.tag} has ${count} warnings`,
+      ephemeral: true,
+    });
+  },
+});
+
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("clearwarnings")
+    .setDescription("Clear warnings")
+    .addUserOption(o => o.setName("user").setRequired(true)),
+
+  async execute(i) {
+    const u = i.options.getUser("user");
+
+    const data = loadJSON(warnFile);
+    delete data[u.id];
+    saveJSON(warnFile, data);
+
+    await i.reply({ content: `Cleared warnings for ${u.tag}` });
+  },
+});
+
+/* ───────────────────────
+   HISTORY / CASE VIEW
+─────────────────────── */
+moderationCommands.push({
+  data: new SlashCommandBuilder()
+    .setName("case")
+    .setDescription("View user cases")
+    .addUserOption(o => o.setName("user").setRequired(true)),
+
+  async execute(i) {
+    const u = i.options.getUser("user");
+    const cases = getCasesForUser(i.guild.id, u.id);
+
+    if (!cases.length)
+      return i.reply({ content: "No cases found", ephemeral: true });
+
+    const embed = new EmbedBuilder()
+      .setTitle(`Cases for ${u.tag}`)
+      .setDescription(
+        cases.slice(-10).map(c =>
+          `#${c.caseId} ${c.type} - ${c.reason}`
+        ).join("\n")
+      );
+
+    await i.reply({ embeds: [embed], ephemeral: true });
   },
 });
