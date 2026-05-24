@@ -1,5 +1,5 @@
 import fs from "fs";
-import { SlashCommandBuilder } from "discord.js";
+import { SlashCommandBuilder, EmbedBuilder } from "discord.js";
 
 const file = "./warnings.json";
 
@@ -34,7 +34,6 @@ const adWarn = {
   async execute(i) {
     const u = i.options.getUser("user");
     const r = i.options.getString("reason");
-    const t = i.options.getString("target");
 
     const m = await i.guild.members.fetch(u.id);
 
@@ -43,12 +42,19 @@ const adWarn = {
 
     await m.timeout(time * 60000, r);
 
-    if (t) {
-      const msg = await i.channel.messages.fetch(t).catch(() => null);
-      if (msg) await msg.delete();
-    }
+    const embed = new EmbedBuilder()
+      .setColor(0xff5500)
+      .setTitle("📢 AD WARNING")
+      .setDescription(`${u.tag} violated advertisement rules`)
+      .addFields(
+        { name: "Reason", value: r },
+        { name: "Timeout", value: `${time} minutes` }
+      )
+      .setFooter({ text: "DM <@1501608341661683752> if incorrect" });
 
-    i.reply(`📢 AD WARN ${u.tag} | ${time} min timeout`);
+    await i.channel.send({ embeds: [embed] });
+
+    i.reply({ content: "AD warn issued", ephemeral: true });
   }
 };
 
