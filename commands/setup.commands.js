@@ -15,17 +15,31 @@ export default [
 {
   data: new SlashCommandBuilder()
     .setName("setup")
-    .addStringOption(o => o.setName("key").setRequired(true))
-    .addStringOption(o => o.setName("value").setRequired(true)),
+    .setDescription("Set configuration values") // ✅ FIXED
+    .addStringOption(o =>
+      o
+        .setName("key")
+        .setDescription("Config key to set") // ✅ FIXED
+        .setRequired(true)
+    )
+    .addStringOption(o =>
+      o
+        .setName("value")
+        .setDescription("Value to store") // ✅ FIXED
+        .setRequired(true)
+    ),
 
   async execute(i) {
     const d = load();
 
-    d[i.options.getString("key")] = i.options.getString("value");
+    const key = i.options.getString("key");
+    const value = i.options.getString("value");
+
+    d[key] = value;
 
     save(d);
 
-    i.reply("Updated config");
+    i.reply({ content: "Updated config", ephemeral: true });
   }
 }
 ];
