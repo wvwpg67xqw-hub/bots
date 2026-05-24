@@ -1,5 +1,11 @@
 {
-  "modLog": null,
-  "adLog": null,
-  "networkLog": null
+  "logsChannel": "",
+  "adChannel": "",
+  "modChannel": "",
+  "staffRole": "",
+  "adminRole": "",
+  "jailRole": "",
+  "muteRole": "",
+  "allowedAdRoles": [],
+  "allowedModRoles": []
 }
